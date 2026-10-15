@@ -197,7 +197,9 @@ and `run_id` on every row so a result set can be reproduced or retracted.
 ## Pass 3 — Mapping to AIT taxonomies
 
 Map paper → AIT directly. Do not route through Cell Ontology; not all AIT types have CL
-terms yet. Record a CL term in `cl_id` as an annotation only when one obviously applies.
+terms yet. Record a CL term in `cl_id` as an annotation only when one obviously applies;
+when the matched node carries one in its trusted file (`cl_terms` from
+`ait_nodes show`), use that.
 
 Select the taxonomy first using species, brain region, and assay. Then find the best
 match within it using label, marker genes, and hierarchy level.
@@ -222,6 +224,55 @@ when the catalog has one (for a multi-species taxonomy, the number for the exper
 species), otherwise its CCN, otherwise its `taxonomy_name`; this is the `ait_id` that
 `rank` prints. If the snapshot looks stale (a taxonomy the paper names is
 missing), say so in `run_report.md` instead of inventing an ID.
+
+### AIT nodes come from the trusted ontologies
+
+Node data — labels, accession ids, hierarchy, marker genes — are the parsed Allen
+taxonomies in `trusted_ontologes/`, the same directory every other trusted ontology
+lives in (`concept_mapping.json` → `trusted_ontologies.directory`). The catalog entry's
+`trusted_files` says which file holds which species (e.g. the Cross-Species Basal
+Ganglia taxonomy: `Human_BG.ttl`, `Macaque_BG.ttl`, `Marmoset_BG.ttl`). They are
+instances of the BICAN Cell Taxonomy model, `trusted_ontologes/cell_taxonomy.ttl`
+(trusted priority 1 in `trusted_ontologes/priority.md`), and are read through it:
+
+| Model class / property | What it gives the mapping |
+|---|---|
+| `bican:CellTypeTaxonomy` (`bican:title`, `bican:reference_genome`) | the taxonomy release a node belongs to |
+| `bican:CellTypeSet` + `bican:order` | the hierarchy levels (Neighborhood → Class → Subclass → Group → cluster) → `ait_hierarchy_level` |
+| `bican:CellTypeTaxon`: `rdfs:label`, `bican:accession_id` | `ait_cell_type_label`, `ait_node_id` |
+| `bican:has_parent` | ancestors, for `nearest_ancestor_node_id` and ancestor `broadMatch` edges |
+| `bican:curated_markers` (→ `bican:GeneAnnotation`, `biolink:symbol`), `gene` abbreviations of the label | the node's marker set (Pass 4) |
+| `bican:Abbreviation` (`term`, `meaning`, `entity_type`, `skos:broadMatch`) | what each label token means: a gene, a region (UBERON/DHBA) or a cell type (CL) |
+| `bican:cell_type_ontology_term`, `skos:broadMatch` to CL | `cl_id` |
+| `bican:literature_name_short/long`, `bican:literature_support` | the names papers use for the node — a label match on these is `label_normalized` |
+
+Read them with code, never from memory:
+
+```bash
+python -m scripts.ait_nodes info AIT19.5                     # file, genome, levels with node counts
+python -m scripts.ait_nodes search AIT19.5 --label "D1 MSN" --gene DRD1 --region putamen [--level Group]
+python -m scripts.ait_nodes show AIT19.5 CS20250428_GROUP_0049   # path, abbreviations, CL, markers
+python -m scripts.ait_nodes markers AIT19.5 <node_id>... --out markers.json   # Pass 4 input
+```
+
+A per-species AIT number selects the species file (`AIT19.5` human, `AIT11.9` macaque,
+`AIT101` marmoset); with a CCN or taxonomy name pass `--species`. `search` is a
+shortlist to adjudicate, like `rank`. Rules:
+
+- `ait_node_id` is the node's `accession_id` (`CS20250428_GROUP_0049`); a cluster-level
+  node, which has none, uses its label (`Human-147`). `ait_cell_type_label` is the
+  node's `rdfs:label` exactly as in the file, and `ait_hierarchy_level` its level.
+  `scripts/ait_tables.py validate` rejects a node id or label the file does not have.
+- Mark `ait_node_id` in `field_provenance` as `code:ontology_lookup` only when it came
+  from `ait_nodes`, and name the file in `notes` (`trusted_ontologes/Human_BG.ttl`).
+- A taxonomy with no `trusted_files` has no local node data. Take node ids only from a
+  source the paper deposits or cites (`supplementary_mapping`, `author_statement`) and
+  record it in `sources.csv`; otherwise record `skos_relation = none` with
+  `no_match_reason = "no trusted node data for <ait_id>"`. Never fill node ids or
+  labels from model knowledge.
+- Cross-species: a mouse paper mapped to `AIT19.5` uses the human file and is at most
+  `closeMatch` (house rule below). Pick the species file closest to the experimental
+  species and say why in `notes`.
 
 ### Use SKOS match relations, with `match_confidence` derived from them
 
@@ -286,7 +337,17 @@ available. Prefer it over your own label matching, and say so in `notes`.
 For each entity that reaches a mapping, assemble a card. The card's distinguishing
 feature is the **marker-gene diff**, which makes the mapping auditable at a glance.
 
-For the mapped AIT node, retrieve its marker gene set. Resolve both gene sets to a common
+For the mapped AIT node, retrieve its marker gene set with
+`python -m scripts.ait_nodes markers` (taxonomies with `trusted_files`): its
+`curated_markers`, then the `gene` abbreviations of its own label, then those of its
+ancestors (`--own-only` drops the ancestors). `curated_markers` are links to
+`bican:GeneAnnotation` instances in the species' genome annotation file
+(`gene_annotation_files` in the catalog, e.g. `trusted_ontologes/annotation-ENSEMBL-9606-109.ttl`);
+the symbols are read from there. A marker the source taxonomy wrote as free text or
+an unknown alias (e.g. `Six3 and Foxp1`, `Ctip2`) was left out when the taxonomy was
+translated and is not in the file — do not add it back from memory. These sets are short — curated markers
+exist for only a few dozen nodes per file — so a large `genes_paper_only` against them
+is weak evidence against a mapping; say so in `notes`. Resolve both gene sets to a common
 namespace (HGNC/MGI symbols, cross-species orthologs via the orthology tool) before
 comparing, and record which namespace was used. Then emit, per entity, three sets:
 
@@ -432,7 +493,7 @@ species, and regions:
 Counts per table; entities extracted, verified, quarantined (from `evidence_report.json`);
 mappings by SKOS relation; edges whose best evidence is only `fuzzy`; unmapped entities
 with reasons; sources attempted vs retrieved; the `allen_taxonomies.json` snapshot date
-used; the `validate` result; and every assumption you made that a curator should check.
+used; the trusted taxonomy file(s) nodes and markers were read from; the `validate` result; and every assumption you made that a curator should check.
 
 ---
 
@@ -445,8 +506,9 @@ used; the `validate` result; and every assumption you made that a curator should
   is the intended steady state.
 - **AIT taxonomy catalog** — `scripts/ait_taxonomy.py` over `data/allen_taxonomies.json`
   picks the taxonomy (Pass 3).
-- **AIT taxonomy reader** — look up candidate nodes by label, region, or markers, and
-  retrieve the marker gene set needed for the Pass 4 diff.
+- **AIT taxonomy reader** — `scripts/ait_nodes.py` over the trusted taxonomy files in
+  `trusted_ontologes/` (model: `cell_taxonomy.ttl`): look up candidate nodes by label,
+  region, or markers, and retrieve the marker gene set needed for the Pass 4 diff.
 - **Deterministic stages** — `scripts/ait_evidence.py` (Pass 2a), `scripts/ait_tables.py`
   (derive / review sheet / validate), `scripts/ait_gene_diff.py` (Pass 4). Run them; do
   not reproduce their output by hand.

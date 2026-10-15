@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — AIT mapping reads nodes from the trusted taxonomy files
+
+- **`scripts/ait_nodes.py`** (new): the AIT taxonomy reader the AIT mapping prompt
+  named but did not have. Reads the parsed Allen taxonomies in `trusted_ontologes/`
+  (`Human_BG.ttl`, `Macaque_BG.ttl`, `Marmoset_BG.ttl`) through the BICAN Cell Taxonomy
+  model (`cell_taxonomy.ttl`): `info`, `search` (label / marker genes / region
+  shortlist), `show`, `markers` (Pass 4 `--markers` JSON). `ait_node_id` is the node's
+  `accession_id`, or its label at the cluster level.
+- **Gene annotations as trusted files**: `annotation-ENSEMBL-9606-109.ttl`,
+  `annotation-NCBI-9544-103.ttl`, `annotation-NCBI-9483-105.ttl` and
+  `annotation-ENSEMBL-10090-109.ttl` (bkbit gff2jsonld, commit 64786ed). The
+  `*_BG.ttl` files are regenerated with bkbit#105 plus the `curated_markers` fix
+  (branch `fix-curated-markers-iri`): markers were bare symbols in an `@id` slot,
+  which Turtle conversion turned into `file:///…/ACTA2` IRIs; they are now
+  `GeneAnnotation` IRIs from the species' annotation, and `ait_nodes` reads the
+  symbols from it. Each was built with one `--gene_annotation` (its species'), which
+  `ait2jsonld` now also records as `CellTypeTaxonomy.gene_annotation_version`
+  (e.g. `ENSEMBL-9606-109`); a test checks it names the catalog's
+  `gene_annotation_files` entry. Otherwise the content is unchanged; the `urn:bkbit`
+  IRIs of the taxonomy's own nodes are new, because they hash their attributes.
+  Not listed in `priority.md` (instance data, not ontology classes).
+- **`data/allen_taxonomies.json`**: `trusted_files` and `gene_annotation_files` (per
+  species) on the Cross-Species Basal Ganglia entry and a top-level `trusted_model`.
+- **`trusted_ontologes/sources.json`**: entries for the four annotation files; the
+  file was invalid JSON (trailing commas at the end) and is fixed.
+- **`ait_tables.py validate`**: an edge into a taxonomy with trusted files must name a
+  node of that file with its exact label (error); a different level is a warning.
+- **Prompt** (`extractor-cell-type-ait-mapping.md`): Pass 3 says where node data come
+  from and how the model's classes map to the mapping columns; Pass 4 takes the marker
+  set from `ait_nodes markers`; a taxonomy without trusted files gets no node ids from
+  model knowledge.
+
 ## Unreleased — Resource extraction delivers a resource KG (BrainKB Resource Ontology)
 
 A resource run now produces a **resource knowledge graph** in the BrainKB Resource

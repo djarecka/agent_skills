@@ -144,6 +144,80 @@ class TaxonomyCatalog(unittest.TestCase):
         self.assertIsNone(tax.species_covered("AIT999", "mouse"))
 
 
+try:
+    import rdflib  # noqa: F401
+    HAVE_RDFLIB = True
+except ImportError:
+    HAVE_RDFLIB = False
+
+
+@unittest.skipUnless(HAVE_RDFLIB, "rdflib not installed")
+class TrustedTaxonomyNodes(unittest.TestCase):
+    def test_trusted_files_exist(self):
+        from scripts import ait_nodes
+        for t in tax.taxonomies():
+            for fname in (t.get("trusted_files") or {}).values():
+                self.assertTrue((ait_nodes.trusted_dir() / fname).exists(), fname)
+
+    def test_species_from_ait_number(self):
+        from scripts import ait_nodes
+        self.assertEqual(ait_nodes.resolve("AIT11.9")[1:], ("macaque", "Macaque_BG.ttl"))
+        with self.assertRaises(LookupError):
+            ait_nodes.resolve("CCN20250428")  # multi-species: needs --species
+        with self.assertRaises(LookupError):
+            ait_nodes.resolve("AIT15.3")  # no trusted file
+
+    def test_human_bg_nodes_levels_and_markers(self):
+        from scripts import ait_nodes
+        t = ait_nodes.load("AIT19.5")
+        self.assertEqual([lvl for lvl, _, _ in t.levels],
+                         ["Neighborhood", "Class", "Subclass", "Group", "cluster_id"])
+        n = t.node("CS20250428_GROUP_0033")
+        self.assertEqual((n.label, n.level), ("SN GATA3-PVALB GABA", "Group"))
+        self.assertEqual(len(n.ancestors), 3)
+        self.assertEqual(t.markers(n.node_id, own_only=True), ["GATA3", "PVALB"])
+        # curated_markers link to GeneAnnotations; symbols come from the annotation file
+        g29 = t.node("CS20250428_GROUP_0029")
+        self.assertTrue(all(i.startswith("urn:bkbit:") for i in g29.curated_markers))
+        self.assertEqual(t.gene_file, "annotation-ENSEMBL-9606-109.ttl")
+        self.assertEqual(t.markers(g29.node_id, own_only=True)[:5],
+                         ["BNC2", "CALB1", "NR4A2", "SLC6A3", "TH"])
+        self.assertIsNotNone(t.node("Human-147"))  # cluster level keyed by label
+
+    def test_every_curated_marker_resolves_in_its_species_annotation(self):
+        from scripts import ait_nodes
+        for ait_id in ("AIT19.5", "AIT11.9", "AIT101"):
+            t = ait_nodes.load(ait_id)
+            self.assertTrue(any(n.curated_markers for n in t.nodes.values()), ait_id)
+            self.assertEqual(t.unresolved_markers(), [], ait_id)
+            for n in t.nodes.values():
+                self.assertFalse([i for i in n.curated_markers if i.startswith("file:")], n.node_id)
+
+    def test_catalog_gene_file_is_the_one_the_taxonomy_was_built_with(self):
+        # ait2jsonld records the annotation curated_markers link into as
+        # gene_annotation_version; the catalog must point ait_nodes at it.
+        import rdflib
+        from scripts import ait_nodes
+        gav = rdflib.URIRef("https://identifiers.org/brain-bican/vocab/gene_annotation_version")
+        for ait_id in ("AIT19.5", "AIT11.9", "AIT101"):
+            t = ait_nodes.load(ait_id)
+            g = ait_nodes._parse(str(ait_nodes.trusted_dir() / t.file))
+            self.assertEqual({f"annotation-{v}.ttl" for v in g.objects(None, gav)}, {t.gene_file}, ait_id)
+
+    def test_search_and_validate_node(self):
+        from scripts import ait_nodes
+        t = ait_nodes.load("AIT19.5")
+        top = ait_nodes.search(t, label="D1 MSN", regions=["putamen"], level="Group", top_n=3)
+        self.assertTrue(all("MSN" in r["label"] for r in top))
+        row = {"ait_id": "AIT19.5", "ait_node_id": "CS20250428_GROUP_0033",
+               "ait_cell_type_label": "SN GATA3-PVALB GABA", "ait_hierarchy_level": "Group"}
+        self.assertEqual(tables.check_node("mappings.csv", 1, row, None, None), [])
+        bad = tables.check_node("mappings.csv", 1, {**row, "ait_node_id": "CS_NOPE"}, None, None)
+        self.assertEqual([i.level for i in bad], ["error"])
+        bad = tables.check_node("mappings.csv", 1, {**row, "ait_cell_type_label": "SN PVALB"}, None, None)
+        self.assertEqual([i.level for i in bad], ["error"])
+
+
 class Normalization(unittest.TestCase):
     def test_quotes_dashes_soft_hyphen_and_line_break_hyphenation(self):
         self.assertEqual(ev.normalize("“Sst” – inter­neuron"), '"Sst" - interneuron')

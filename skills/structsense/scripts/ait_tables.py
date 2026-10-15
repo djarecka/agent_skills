@@ -296,6 +296,32 @@ def _check_cells(table: str, rows, schema, issues: List[Issue]) -> None:
                         issues.append(Issue("error", table, n, "field_provenance", f"unknown provenance label {label!r}"))
 
 
+def check_node(table: str, row: int, m: Dict[str, str], catalog: Optional[Path],
+               species: Optional[str]) -> List[Issue]:
+    """An edge into a taxonomy with a trusted file must name a node of that file, with
+    its label; the level is checked loosely (warning). See scripts/ait_nodes.py."""
+    from scripts import ait_nodes
+    try:
+        tax = ait_nodes.load(m["ait_id"], species, catalog=catalog)
+    except ImportError:
+        return [Issue("warning", table, row, "ait_node_id", "rdflib not installed; node not checked")]
+    except LookupError as e:
+        return [Issue("warning", table, row, "ait_node_id", f"node not checked: {e}")]
+    node = tax.node(m["ait_node_id"])
+    if node is None:
+        return [Issue("error", table, row, "ait_node_id",
+                      f"{m['ait_node_id']!r} is not a node of trusted_ontologes/{tax.file}")]
+    out = []
+    if m.get("ait_cell_type_label") and m["ait_cell_type_label"] != node.label:
+        out.append(Issue("error", table, row, "ait_cell_type_label",
+                         f"node {node.node_id} is labelled {node.label!r} in {tax.file}"))
+    lvl = m.get("ait_hierarchy_level", "")
+    if lvl and lvl.lower() != node.level.lower():
+        out.append(Issue("warning", table, row, "ait_hierarchy_level",
+                         f"node {node.node_id} is at level {node.level!r} in {tax.file}"))
+    return out
+
+
 def validate(out_dir: Path, schema: Optional[dict] = None, catalog: Optional[Path] = None) -> List[Issue]:
     schema = schema or load_schema()
     out_dir = Path(out_dir)
@@ -398,6 +424,8 @@ def validate(out_dir: Path, schema: Optional[dict] = None, catalog: Optional[Pat
                 issues.append(Issue("warning", t, n, "ait_id", f"{ait_id!r} not in data/allen_taxonomies.json"))
             elif m.get("species_experimental"):
                 covered = ait_taxonomy.species_covered(ait_id, m["species_experimental"], catalog)
+            if entry is not None and entry.get("trusted_files"):
+                issues += check_node(t, n, m, catalog, m.get("species_experimental") if covered else None)
         if skos == "skos:exactMatch":
             basis = set(split_multi(m.get("basis_for_match", "")))
             if not basis & EXACT_MATCH_BASIS:

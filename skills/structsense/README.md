@@ -136,6 +136,7 @@ structsense/
 │   ├── abcd_synthesize.py   ← cross-paper consensus/divergence + role consistency
 │   ├── abcd_export.py       ← JSON + Markdown tables + Turtle (PROV-O) writers
 │   ├── ait_taxonomy.py      ← AIT taxonomy catalog: list / rank / show
+│   ├── ait_nodes.py         ← AIT taxonomy reader: nodes + markers from trusted_ontologes/*_BG.ttl
 │   ├── ait_evidence.py      ← AIT Pass 2a: lexical evidence check + quarantine
 │   ├── ait_tables.py        ← AIT column contract: init / derive / review-sheet / validate
 │   └── ait_gene_diff.py     ← AIT Pass 4: entity cards + marker-gene diff

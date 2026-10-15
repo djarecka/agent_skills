@@ -5,7 +5,8 @@
     "This catalog is deliberately limited to these eight taxonomies. Add a taxonomy here, not in a prompt.",
     "ait_ids are the Allen Institute Taxonomy numbers shown on each taxonomy's brain-map.org page; ait_ids_by_species gives the per-species number for multi-species taxonomies.",
     "regions holds anatomical terms only; scripts/ait_taxonomy.py matches them against a paper's regions.",
-    "Not re-confirmed against brain-map.org on the snapshot date: the Comparative LGN CCN (null), the Whole Mouse Brain Consensus publication line, and the mapmycells flags other than those of the Whole Mouse Brain Consensus and Cross-Species Basal Ganglia taxonomies."
+    "Not re-confirmed against brain-map.org on the snapshot date: the Comparative LGN CCN (null), the Whole Mouse Brain Consensus publication line, and the mapmycells flags other than those of the Whole Mouse Brain Consensus and Cross-Species Basal Ganglia taxonomies.",
+    "trusted_files names, per species, the parsed taxonomy in trusted_ontologes/ (instances of trusted_model, the BICAN Cell Taxonomy model) that scripts/ait_nodes.py reads nodes and marker genes from. A taxonomy without trusted_files has no local node data. gene_annotation_files names, per species, the genome annotation (bkbit gff2jsonld) in trusted_ontologes/ whose GeneAnnotation IRIs the taxonomy's curated_markers link to; ait_nodes.py reads marker symbols from it."
   ],
   "taxonomies": [
     {
@@ -61,7 +62,17 @@
       ],
       "hierarchy": ">2M nuclei, 10x multiome + ATAC + spatial + morphology/ephys; ~60 homologous types aligned to mouse and human whole-brain atlases; refined MSN/GABAergic taxonomy",
       "publication": "Johansen N.J., Fu Y., Schmitz M. et al., Cross-species consensus atlas of the primate basal ganglia, bioRxiv (2025) doi:10.64898/2025.12.15.694496",
-      "mapmycells": true
+      "mapmycells": true,
+      "trusted_files": {
+        "human": "Human_BG.ttl",
+        "macaque": "Macaque_BG.ttl",
+        "marmoset": "Marmoset_BG.ttl"
+      },
+      "gene_annotation_files": {
+        "human": "annotation-ENSEMBL-9606-109.ttl",
+        "macaque": "annotation-NCBI-9544-103.ttl",
+        "marmoset": "annotation-NCBI-9483-105.ttl"
+      }
     },
     {
       "ait_ids": [
@@ -202,5 +213,6 @@
       "publication": "Yao Z. et al., Cell 184:3222-3241 (2021)",
       "mapmycells": false
     }
-  ]
+  ],
+  "trusted_model": "cell_taxonomy.ttl"
 }
