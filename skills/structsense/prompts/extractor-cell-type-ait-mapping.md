@@ -547,8 +547,8 @@ python -m scripts.ait_ttl out/ --text paper.txt --source paper.pdf
 ```
 
 which refuses tables that do not pass `ait_tables validate`, takes every entity's
-ontology term from `concept_mappings.csv` (running the concept map stage itself, trusted
-files only, when that file is missing), writes
+ontology term from `concept_mappings.csv` (running the concept map stage itself, with the
+same cascade, when that file is missing), writes
 `out/<paper_id>.ttl` as instances of the Named Entity Ontology (the same
 `json_to_ttl` builder as every NER run, so keys, UUIDv5 IRIs and provenance agree
 with a `cns-cells` run of the same paper), and gates it with `validate_ttl` (a

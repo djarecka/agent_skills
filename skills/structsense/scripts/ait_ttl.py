@@ -22,8 +22,9 @@ identity (UUIDv5 keys), provenance and the gate (`validate_ttl.py`) are identica
   `GeneAnnotation` in the species' ENSEMBL/NCBI genome annotation, species / brain
   regions / cell types -> the trusted ontologies first. Reading that table (not
   mapping again) is what makes judge and curator corrections reach the graph. When
-  the table is missing, the map stage is run here with the trusted files only and the
-  table is written;
+  the table is missing, the map stage is run here — the same cascade as
+  `review_loop map` (trusted files first, then the local mapper, OLS, BioPortal;
+  `--offline`: trusted files only) — and the table is written;
 * `entities.marker_genes` become paper-stated `expresses` (RO:0002292) edges when a
   sentence of the paper names both the cell type and the gene (that sentence is the
   evidence); a marker with no such sentence is reported, not written.
@@ -299,14 +300,16 @@ class AitTurtleBuilder(j2t.TurtleBuilder):
 CONCEPT_FIELDS = ("ontology_id", "ontology_label", "ontology", "mapping_source", "match_tier")
 
 
-def concept_rows(out_dir: Path, data: Dict[str, List[Dict[str, str]]]) -> Tuple[List[Dict[str, str]], bool]:
-    """(concept_mappings.csv rows, ran_map_stage). Runs the map stage, trusted files
-    only, and writes the table when it is missing."""
+def concept_rows(out_dir: Path, data: Dict[str, List[Dict[str, str]]], offline: bool = False
+                 ) -> Tuple[List[Dict[str, str]], bool]:
+    """(concept_mappings.csv rows, ran_map_stage). When the table is missing, runs the
+    map stage with the configured cascade (trusted files first; `offline`: trusted
+    files only) and writes it."""
     from scripts import review_loop as rl
     p = out_dir / rl.CONCEPT_TABLE
     if p.exists():
         return ait_tables.read_table(p)[1], False
-    rl.map_ait(data, rl.Tools(offline=True))
+    rl.map_ait(data, rl.Tools(offline=offline))
     import csv
     with open(p, "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL, lineterminator="\n")
@@ -361,7 +364,8 @@ def apply_concepts(result: dict, rows: List[Dict[str, str]], entities: List[Dict
 
 
 def convert(out_dir: Path, text_path: Path, *, source: Optional[Path] = None, out: Optional[Path] = None,
-            profile: str = "compact", expand_all: bool = True, gate: bool = True) -> dict:
+            profile: str = "compact", expand_all: bool = True, gate: bool = True,
+            offline: bool = False) -> dict:
     issues = [i for i in ait_tables.validate(out_dir) if i.level == "error"]
     if issues:
         raise SystemExit(f"ait_tables validate reports {len(issues)} error(s); fix the tables first")
@@ -370,9 +374,10 @@ def convert(out_dir: Path, text_path: Path, *, source: Optional[Path] = None, ou
     result, plan, report = build_result(data, text, source=source, expand_all=expand_all)
     ait_edged = frozenset(m["mention_id"] for m in ait_tables.current_mappings(data["mappings.csv"])
                           if m.get("ait_node_id") and m.get("skos_relation") not in ("", "none"))
-    rows, ran = concept_rows(out_dir, data)
+    rows, ran = concept_rows(out_dir, data, offline)
     report["concept_mapping"] = apply_concepts(result, rows, data["entities.csv"], ait_edged)
     report["concept_mapping"]["ran_map_stage"] = ran
+    report["concept_mapping"]["offline"] = offline
     from scripts import concept_mapping as cm
     report["concept_mapping"]["missing_files"] = [
         s.spec["file"] for s in cm.TrustedMapper(cm.load_config()).lexicon.missing_files()]
@@ -425,16 +430,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--grounded-only", action="store_true",
                     help="mentions only inside verified evidence spans (no expansion)")
     ap.add_argument("--no-gate", action="store_true", help="skip validate_ttl (never for a deliverable)")
+    ap.add_argument("--offline", action="store_true",
+                    help="if concept_mappings.csv is missing, map with the trusted files only (no remote sources)")
     args = ap.parse_args(argv)
     rep = convert(args.out_dir, args.text, source=args.source, out=args.out, profile=args.profile,
-                  expand_all=not args.grounded_only, gate=not args.no_gate)
+                  expand_all=not args.grounded_only, gate=not args.no_gate, offline=args.offline)
     c = rep["counts"]
     print(f"wrote {rep['ttl']}: {rep['triples']} triples, {c.get('entities', 0)} entities, "
           f"{c.get('mentions', 0)} mentions, {c.get('ait_edges', 0)} AIT edges, "
           f"{rep['expresses_edges']} expresses edges")
     cmr = rep.get("concept_mapping") or {}
     if cmr.get("ran_map_stage"):
-        print("  concept_mappings.csv was missing: ran the concept map stage (trusted files only) and wrote it")
+        print("  concept_mappings.csv was missing: ran the concept map stage "
+              f"({'trusted files only' if cmr.get('offline') else 'trusted files first, then the cascade'}) and wrote it")
     mapped = ", ".join(f"{k} {v}" for k, v in sorted(cmr.get("mapped", {}).items())) or "none"
     unmapped = ", ".join(f"{k} {v}" for k, v in sorted(cmr.get("unmapped", {}).items())) or "none"
     print(f"  concept mapping (concept_mappings.csv; AIT-edged cell types excluded): mapped {mapped}; "

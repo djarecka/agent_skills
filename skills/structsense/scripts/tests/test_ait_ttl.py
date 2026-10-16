@@ -97,7 +97,8 @@ def test_ait_tables_to_validated_ttl(tmp_path):
     _run("scripts.ait_gene_diff", str(tmp_path), "--markers", str(tmp_path / "markers.json"), "--namespace", "HGNC")
     _run("scripts.ait_tables", "review-sheet", str(tmp_path))
     _run("scripts.ait_tables", "validate", str(tmp_path))
-    out = _run("scripts.ait_ttl", str(tmp_path), "--text", str(tmp_path / "paper.txt"))
+    # --offline: the fallback map stage uses the trusted files only (no network in tests)
+    out = _run("scripts.ait_ttl", str(tmp_path), "--text", str(tmp_path / "paper.txt"), "--offline")
     assert "VALID" in out
     g = Graph().parse(tmp_path / f"{PID}.ttl")
     cell = g.value(predicate=NER.normalizedEntityKey, object=Literal("str_d1_msn"))
