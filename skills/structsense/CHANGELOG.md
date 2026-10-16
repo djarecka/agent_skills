@@ -29,15 +29,17 @@
   another case or a synonym (`skos:closeMatch`, flagged), and only when exactly one
   gene matches. Unlinked genes get a gap comment and are listed by `ait_ttl`.
   `ait_nodes genes <species> <symbol>…` does the same lookup from the command line.
-- **AIT runs concept-map every entity against the trusted ontologies.** The flow is
-  extraction → concept mapping (trusted files only) → Turtle. `ait_ttl` now runs
-  `concept_mapping` with the trusted source on species, brain regions and cell types
-  without an AIT edge (before, none were mapped), querying each row's
-  `label_normalized` rather than a mention surface (a preprint surface such as
-  `subthalamic 139 nucleus` carries margin line numbers). Genes keep their own trusted
-  source, the genome annotation; AIT cell types their `mappings.csv` edge. The lexicon
-  is built on first use. On the test paper: species 5/5, brain regions 10/18 (the rest
-  need `uberon.owl`, which `priority.md` lists but the directory does not hold).
+- **One concept-mapping stage, and the Turtle is written from it.** The flow is
+  extraction → concept mapping (the review loop's `review_loop map --mode ait` →
+  `concept_mappings.csv`, trusted files first) → judges / human feedback → Turtle.
+  `ait_ttl` takes every entity's term from `concept_mappings.csv`, so judge and
+  curator corrections reach the graph; when the table is missing it runs the map stage
+  with the trusted files only and writes it. Before, no species or region was mapped
+  in the Turtle. `map_ait` sends **gene rows to their genome annotation**
+  (`ait_nodes.resolve_gene_row`), not the general mapper, and a `remap` of a gene's
+  concept row looks the new symbol up there too. On the test paper: species 5/5,
+  brain regions 10/18 (the rest need `uberon.owl`, which `priority.md` lists but the
+  directory does not hold), genes 39/39.
 - **Every gene row is linked.** `gene_annotations` is keyed by NCBI taxon id (common and
   scientific names as fallback); a gene row with no species takes the paper's one
   experimental species; `ait_tables validate` fails when a cell type's marker gene has no
@@ -93,6 +95,46 @@
   from and how the model's classes map to the mapping columns; Pass 4 takes the marker
   set from `ait_nodes markers`; a taxonomy without trusted files gets no node ids from
   model knowledge.
+## Unreleased — One review loop for every mode: the judge and the human both correct
+
+Every mode — NER, ABCD/HBCD, AIT — now runs extract → concept map → judge → human
+feedback (optional) → output, with an optional output loop back to feedback
+(`references/review-loop.md`). Judges and humans correct through one operation
+vocabulary applied by one module, under the same rules.
+
+- **`scripts/review_loop.py`** (new): per-mode item views with stable ids; operations
+  `drop` / `restore` / `set` / `remap` / `demote` / `approve` / `note`; field
+  allowlists per item kind (`FIXABLE`); ids only from a tool (ConceptMapper, the ABCD
+  dictionary, the Cognitive Atlas); an append-only `review_loop` log with actor,
+  reviewer, before/after and refusals. Drops keep the full record, so a wrong drop
+  can be restored. `map` concept-maps ABCD constructs and AIT entities.
+- **Judge corrects, not only scores.** NER: a mapping fail with `suggestion.query`
+  (a better search term, never an id) re-runs the mapping tool — trusted ontologies
+  first — instead of only demoting (`judge_remapped`, `report.remapped`); unmapped
+  routed entities go to the mapping judge too. ABCD/AIT get the same panel and gates
+  via **`scripts/record_judge.py`** and **`prompts/judge-record.md`** (previously they
+  bypassed the judge): ABCD gate failures go to `rejected[]`, AIT revisions append
+  superseding `mappings.csv` rows, so the CSV contract still validates.
+- **Human feedback is wired in** (it was a prompt only). **`scripts/human_feedback.py`**:
+  `queue` (escalations, low scores, judge re-maps, drops), `apply` (then re-render and
+  re-gate), `interactive` (approve / abort / edit / skip, 60 s timeout, output loop).
+  `prompts/humanfeedback.md` now turns words into operations instead of rewriting
+  JSON. Entry points: `pipeline.py --feedback / --human-feedback interactive`,
+  `batch.py init --human-feedback` (a `human_feedback` task) and `batch.py feedback
+  <stem>` (output loop), `abcd_extract.py --feedback / --human-feedback` (default
+  `<out>/feedback/<stem>.feedback.json`), AIT via the CLI.
+- **Concept map: trusted folder first, then local, OLS MCP, BioPortal.**
+  `sources_priority` is now `trusted, local_hybrid, ols, bioportal`; `ols` is the OLS
+  MCP server (`https://www.ebi.ac.uk/ols4/api/mcp`, **`scripts/ols_mcp_map.py`**,
+  exact label matches only); the REST client is `ols_rest`. `pipeline.py --mapper
+  local|ols|bioportal` no longer skips the trusted files. ABCD constructs map through
+  the cascade (`CognitiveConstruct` route) next to the Cognitive Atlas id; AIT entities
+  get `concept_mappings.csv`.
+- **Provenance:** NER Turtle (`--profile full`) records each human round as a
+  `ner:HumanReviewActivity` with change records; ABCD Turtle gains `skos:<tier>` to
+  the tool mapping, `abcd:judgeScore`, `abcd:humanVerified`, and the Markdown a
+  "Review loop" table.
+- Tests: `scripts/tests/test_review_loop.py` (offline).
 
 ## Unreleased — Resource extraction delivers a resource KG (BrainKB Resource Ontology)
 

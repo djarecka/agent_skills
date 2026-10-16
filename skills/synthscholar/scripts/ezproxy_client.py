@@ -93,6 +93,9 @@ def _load_cookie_file(path: str) -> dict[str, str]:
         return cookies
     for line in text.splitlines():
         line = line.strip()
+        # curl and browser exports mark HttpOnly cookies with a "#HttpOnly_" prefix
+        if line.startswith("#HttpOnly_"):
+            line = line[len("#HttpOnly_"):]
         if not line or line.startswith("#"):
             continue
         parts = line.split("\t")
@@ -189,7 +192,9 @@ class EZProxyConfig:
         if any(host == d or host.endswith("." + d) for d in _NEVER_PROXY):
             return url
         if self.mode == MODE_LOGIN_URL:
-            return f"https://{self.host}/login?url={quote(url, safe='')}"
+            # qurl= takes the target percent-encoded; url= must be raw, and an
+            # encoded url= matches no database, so EZproxy serves its menu instead
+            return f"https://{self.host}/login?qurl={quote(url, safe='')}"
         # hostname-suffix: dots → dashes, existing dashes doubled (EZproxy's
         # own escaping rule), then the proxy host appended.
         netloc = parsed.netloc.split("@")[-1]

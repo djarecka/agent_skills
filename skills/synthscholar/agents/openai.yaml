@@ -23,11 +23,19 @@ dependencies:
   # per-script table below and the README.
   python:
     - "rdflib>=6.0"          # SPARQL over an RDF export (query_sparql.py)
-    - "httpx>=0.25"          # open-access + institutional retrieval (fetch_ezproxy.py)
+    - "httpx>=0.25"          # open-access + institutional retrieval (fetch_ezproxy.py), registry lookups (verify_citations.py)
     - "pymupdf>=1.24"        # PDF text extraction (build_corpus.py)
     - "docling"              # first extraction backend in build_corpus.py (tables + OCR)
     - "psycopg[binary]>=3.1" # article-store queries (query_postgres.py, backfill)
     - "pydantic>=2.0"        # result validation (export_review.py)
+    - "playwright"           # library sign-in in a browser (fetch_ezproxy.py, paywalled papers only)
+
+  # Not pip packages: command-line tools generate_review_pdf.py shells out to.
+  # Check with `python scripts/generate_review_pdf.py --check-deps`.
+  system:
+    pandoc: "required for PDF — conda install -c conda-forge pandoc | brew install pandoc | apt-get install pandoc"
+    pdf_engine: "one of xelatex, lualatex, tectonic, pdflatex, typst, weasyprint, wkhtmltopdf, prince — lightest: conda install -c conda-forge typst (or tectonic)"
+    fc-list: "optional; picks a Unicode font for TeX engines — part of fontconfig (brew install fontconfig | apt-get install fontconfig)"
 
   # The application this skill drives. The released package on PyPI (0.0.11)
   # predates the whole-document reading, full-text-based eligibility screening,
@@ -42,12 +50,19 @@ dependencies:
   scripts:
     validate_protocol.py: "stdlib only (PyYAML optional, for .yaml protocols)"
     build_corpus.py: "docling first (tables + OCR, the only backend that reads a scanned PDF), then pymupdf, pypdf, the pdftotext CLI; --no-docling skips it"
-    fetch_ezproxy.py: "httpx; open access needs no credentials, institutional access needs the EZPROXY_* vars"
+    fetch_ezproxy.py: "httpx; open access needs no credentials; institutional access signs in through a browser (playwright) — no EZPROXY_* setup"
+    ezproxy_login.py: "playwright + Chrome/Edge (or playwright's Chromium); saves the session under ~/.config/synthscholar"
     oa_client.py: "httpx; vendored Unpaywall/OpenAlex/Semantic Scholar DOI chain, imported by fetch_ezproxy.py"
     ezproxy_client.py: "httpx; vendored EZproxy client, used when synthscholar.ezproxy is absent"
     run_local_review.py: "synthscholar development checkout + OPENROUTER_API_KEY"
     export_review.py: "synthscholar development checkout"
     update_provenance.py: "synthscholar (models only)"
+    check_writing.py: "stdlib only"
+    review_figures.py: "stdlib only (SVG)"
+    assemble_manuscript.py: "stdlib only"
+    verify_citations.py: "httpx; Crossref, doi.org, NCBI E-utilities — no credentials"
+    prisma_flow.py: "stdlib for the SVG; rsvg-convert, cairosvg or typst for the PDF a TeX engine embeds"
+    generate_review_pdf.py: "pandoc + one engine (xelatex, lualatex, tectonic, pdflatex, typst, weasyprint, wkhtmltopdf, prince); stdlib otherwise"
     query_sparql.py: "rdflib"
     query_postgres.py: "psycopg[binary]"
     backfill_full_text.py: "psycopg[binary] + synthscholar, migration 006 applied"
@@ -55,8 +70,9 @@ dependencies:
   environment:
     OPENROUTER_API_KEY: "required by run_local_review.py; unused by the other scripts"
     SYNTHSCHOLAR_EMAIL: "polite-pool contact; Unpaywall requires it (ToS) and is skipped without it"
+    NCBI_API_KEY: "optional; raises the PubMed E-utilities rate limit for verify_citations.py"
     SEMANTIC_SCHOLAR_API_KEY: "optional; lifts Semantic Scholar's 1 req/s public rate limit"
-    EZPROXY_HOST: "institutional proxy host, for retrieving paywalled papers"
+    EZPROXY_HOST: "optional manual override — the browser sign-in finds and saves the proxy itself"
     EZPROXY_COOKIE_FILE: "browser-exported cookies.txt for that proxy (or EZPROXY_COOKIE)"
     EZPROXY_MODE: "hostname-suffix (default) or login-url"
     EZPROXY_DELAY: "seconds between proxied requests (default 3)"

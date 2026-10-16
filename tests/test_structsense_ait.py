@@ -216,7 +216,7 @@ class TrustedTaxonomyNodes(unittest.TestCase):
             self.assertEqual({f"annotation-{v}.ttl" for v in g.objects(None, gav)}, {t.gene_file}, ait_id)
 
     def test_every_extracted_gene_links_to_an_ensembl_or_ncbi_annotation(self):
-        from scripts import ait_ttl
+        from scripts import ait_nodes
         row = lambda mid, sym, sp="", tx="": {"mention_id": mid, "entity_type": "gene", "label_verbatim": sym,
                                               "label_normalized": sym, "species": sp, "ncbi_taxon_id": tx}
         rows = [row("M1", "DRD1", "human", "9606"),          # ENSEMBL human
@@ -228,19 +228,22 @@ class TrustedTaxonomyNodes(unittest.TestCase):
                 row("M7", "Drd1", "mouse"),                    # ENSEMBL mouse, mouse-style symbol
                 row("M8", "Drd1", "rat", "10116"),             # no trusted annotation
                 row("M9", "NOTAGENE1", "human")]               # not in the annotation
-        links, rep = ait_ttl.link_genes(rows, ("human", "9606"))
+        links = {r["mention_id"]: ait_nodes.resolve_gene_row(r, ("human", "9606")) for r in rows}
         human = links["M1"].iri
         self.assertTrue(human.startswith("urn:bkbit:"))
-        self.assertEqual({links[m].iri for m in ("M2", "M3", "M4")}, {human})
-        self.assertEqual(rep["species_from_paper"], ["DRD1"])
+        self.assertEqual({links[m].iri for m in ("M2", "M3", "M4")}, {human})  # M4: the paper's species
         self.assertEqual(links["M5"].file, "annotation-NCBI-9544-103.ttl")
         self.assertEqual(links["M6"].file, "annotation-NCBI-9483-105.ttl")
         self.assertEqual((links["M7"].file, links["M7"].tier), ("annotation-ENSEMBL-10090-109.ttl", "symbol"))
         self.assertTrue(links["M5"].iri and links["M6"].iri and links["M7"].iri)
         self.assertEqual(len({links[m].iri for m in ("M1", "M5", "M6", "M7")}), 4)  # one gene per species
-        self.assertEqual(rep["linked"], 7)
+        self.assertEqual(sum(1 for g in links.values() if g.iri), 7)
         self.assertIn("no trusted gene annotation", links["M8"].reason)
-        self.assertEqual(rep["unresolved"], ["NOTAGENE1: no gene with this symbol or synonym"])
+        self.assertEqual(links["M9"].reason, "no gene with this symbol or synonym")
+        # as a concept row: tool provenance, the annotation file as its source
+        f = ait_nodes.gene_concept_fields(links["M5"])
+        self.assertEqual((f["concept_mapping_provenance"], f["mapping_source"], f["match_tier"]),
+                         ("tool", "trusted:annotation-NCBI-9544-103", "exactMatch"))
 
     def test_search_and_validate_node(self):
         from scripts import ait_nodes

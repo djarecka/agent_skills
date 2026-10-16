@@ -97,6 +97,8 @@ Set by the pipeline / resolver as full text is obtained:
 | `openalex_pdf` | OpenAlex-discovered PDF |
 | `semanticscholar_pdf` | Semantic Scholar-discovered PDF |
 | `ezproxy_pdf` | subscription article fetched through the reviewer's institutional EZproxy session (`synthscholar.ezproxy`) |
+| `zenodo_pdf` | an author-deposited copy on Zenodo, used when the published version and its preprint were unreachable (skill `deposited_copies.py`) |
+| `arxiv_pdf` | an arXiv copy found by title, same last-resort condition |
 | `user_supplied_pdf` | PDF the reviewer provided (bring-your-own-corpus, see [byo_corpus_review.md](byo_corpus_review.md)) |
 | `article_store` | pre-filled from a prior run's stored article |
 | `cache` | restored from the resolver's `resolved_fulltext` cache |

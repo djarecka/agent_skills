@@ -23,27 +23,38 @@ edge. Practically this means:
 
 ## Order of operations
 
-Four passes. Do not merge Pass 1 with Pass 3 — extraction must not be biased by what
-the taxonomy happens to contain.
+Four passes, then the review loop every structsense mode runs
+(`references/review-loop.md`). Do not merge Pass 1 with Pass 3 — extraction must not
+be biased by what the taxonomy happens to contain.
 
 1. **Index and extract (one pass over the paper).**
 2. **Verify** — lexical evidence check, deduplication, provenance labelling.
 3. **Map** to AIT taxonomies with SKOS match relations.
 4. **Assemble entity cards**, including the marker-gene diff.
-5. **Concept-map and write the Turtle** — always: `python -m scripts.ait_ttl` maps every
-   extracted entity against the files in `trusted_ontologes/` (code, never memory), then
-   turns the validated tables into `<paper_id>.ttl` and gates it. A run that stops at the
+5. **Review loop** — concept map every entity through the trusted ontologies
+   (`python -m scripts.review_loop map --mode ait out/` → `concept_mappings.csv`:
+   trusted files first, then the local mapper, OLS MCP, BioPortal; **genes through the
+   species' genome annotation**, see below); the judge panel
+   (`python -m scripts.record_judge prepare|combine --mode ait out/`, prompt
+   `prompts/judge-record.md`, one judge at a time); optional human feedback
+   (`python -m scripts.human_feedback queue|apply --mode ait out/`). Corrections
+   append superseding rows to `mappings.csv` (`mapped_by` llm for a judge, human for a
+   curator) and never overwrite; an entity a gate drops is quarantined
+   (`unverified_evidence`). Re-run Pass 4 if an edge moved to another node, then
+   `ait_tables validate`.
+6. **Write the Turtle** — always: `python -m scripts.ait_ttl` turns the validated tables
+   and `concept_mappings.csv` into `<paper_id>.ttl` and gates it. A run that stops at the
    CSVs is unfinished.
 
 The flow is **extraction, then concept mapping against the trusted ontologies**. You
 extract into the tables (Passes 1–4); the mapping of every entity to an ontology term is
-done by code from the trusted files, by entity type:
+done by code from the files in `trusted_ontologes/`, by entity type:
 
-| Entity | Trusted source | How |
+| Entity | Trusted source | Where it is recorded |
 |---|---|---|
 | cell type with an AIT edge | the taxonomy file (`Human_BG.ttl`, …) | your `mappings.csv` edge, node ids from `ait_nodes` |
-| gene | the species' genome annotation (`annotation-ENSEMBL-9606-109.ttl`, `annotation-NCBI-9544-103.ttl`, …; catalog `gene_annotations`) | `ait_ttl`, by symbol |
-| species, brain region, cell type without an AIT edge | the ontologies of `trusted_ontologes/priority.md` (NCBITaxon, UBERON via CL, CL, …) | `ait_ttl` runs `concept_mapping` with the trusted source only, on each row's `label_normalized` |
+| gene | the species' genome annotation (`annotation-ENSEMBL-9606-109.ttl`, `annotation-NCBI-9544-103.ttl`, …; catalog `gene_annotations`), by symbol (`ait_nodes.GeneLookup`) | `concept_mappings.csv` (`review_loop map`) |
+| species, brain region, any cell type | the ontologies of `trusted_ontologes/priority.md` (NCBITaxon, UBERON via CL, CL, …), on the row's `label_normalized` | `concept_mappings.csv` (`review_loop map`) |
 
 So give every row a clean `label_normalized` (the name, not the surface: `subthalamic
 nucleus`, not `subthalamic 139 nucleus`; `striatum`, not `striatal`), give gene rows their
@@ -414,6 +425,8 @@ python -m scripts.ait_tables derive out/          # match_confidence + crosswalk
 python -m scripts.ait_gene_diff out/ --markers markers.json --namespace MGI
 python -m scripts.ait_tables review-sheet out/    # the deterministic join
 python -m scripts.ait_tables validate out/        # must exit 0 before anything reaches the knowledge graph
+python -m scripts.review_loop map --mode ait out/ # concept_mappings.csv (trusted files first; genes: annotation)
+# ... judge panel and optional human feedback (Pass 5), then validate again
 python -m scripts.ait_ttl out/ --text paper.txt --source paper.pdf   # ALWAYS: writes out/<paper_id>.ttl, must print VALID
 ```
 
@@ -533,7 +546,9 @@ ends with
 python -m scripts.ait_ttl out/ --text paper.txt --source paper.pdf
 ```
 
-which refuses tables that do not pass `ait_tables validate`, writes
+which refuses tables that do not pass `ait_tables validate`, takes every entity's
+ontology term from `concept_mappings.csv` (running the concept map stage itself, trusted
+files only, when that file is missing), writes
 `out/<paper_id>.ttl` as instances of the Named Entity Ontology (the same
 `json_to_ttl` builder as every NER run, so keys, UUIDv5 IRIs and provenance agree
 with a `cns-cells` run of the same paper), and gates it with `validate_ttl` (a
@@ -544,14 +559,12 @@ failing file is renamed `.invalid.ttl` and is not a result). What it contains:
 | `paper.csv` | `ner:Publication` + document version |
 | `entities.csv` (not quarantined) | one `ner:NamedEntity` per row (`CellType`, `CellSubtype` for supertype/cluster/type, `Gene`, `Species`, `BrainRegion`), key = normalized label; mentions at exact offsets — inside the verified evidence spans, plus every other in-scope occurrence of a surface only that row uses |
 | `mappings.csv` | per edge: `ner:resolvedToConcept` + `skos:<relation>` to the AIT node's own IRI from the trusted file (`urn:bkbit:…`, prefix `BKBIT`), and a `ner:ConceptMappingDecision` with basis, `mapping_evidence`, `notes` and the Pass 4 marker diff; `none` → a gap comment with `no_match_reason` |
-| gene rows of `entities.csv` | `ner:resolvedToConcept` + `skos:exactMatch` to the gene's `GeneAnnotation` in the species' trusted genome annotation (`urn:bkbit:…`; catalog `gene_annotations`, e.g. human → `annotation-ENSEMBL-9606-109.ttl`), looked up by code (`ait_nodes.GeneLookup`). A match only by case or synonym is `skos:closeMatch`, flagged for review. An ambiguous or unknown symbol, or a species without a trusted annotation, gets a gap comment instead |
-| species, brain region and cell-type rows without an AIT edge | `ner:resolvedToConcept` + `skos:*Match` to the term the trusted ontologies give for the row's `label_normalized` (`concept_mapping`, trusted source only, `label_routing`: Species → NCBITaxon, BrainRegion → UBERON, CellType → CL > PCL). A term no trusted file has stays unmapped (internal `BRAINKB:` concept) and is counted as unmapped |
+| `concept_mappings.csv`, gene rows | `ner:resolvedToConcept` + `skos:exactMatch` to the gene's `GeneAnnotation` in the species' trusted genome annotation (`urn:bkbit:…`; catalog `gene_annotations`, e.g. human → `annotation-ENSEMBL-9606-109.ttl`). A match only by case or synonym is `skos:closeMatch`, flagged for review. An ambiguous or unknown symbol, or a species without a trusted annotation, is an unmapped row with the reason in `notes` |
+| `concept_mappings.csv`, species / brain region / cell-type rows without an AIT edge | `ner:resolvedToConcept` + `skos:<match_tier>` to the row's `ontology_id` (trusted ontologies first: Species → NCBITaxon, BrainRegion → UBERON, CellType → CL > PCL). An unmapped row stays unmapped (internal `BRAINKB:` concept) and is counted as unmapped. A judge's or curator's correction of the row is what is written |
 | `marker_genes` | `expresses` (RO:0002292) to the gene entity, only where one sentence of the paper names both (that sentence is the evidence); others are listed as not written |
 
 Working files go to `out/.structsense/` (`<paper_id>_ait_final.json`,
-`_ait_kg_plan.json`, `_ait_ttl_report.json`). Genes are linked as above; species,
-regions and cell types without an AIT edge are mapped against the trusted ontologies
-(the lexicon is built on first use). In `run_report.md`, quote what
+`_ait_kg_plan.json`, `_ait_ttl_report.json`). In `run_report.md`, quote what
 `ait_ttl` prints: the concept-mapping counts per class (mapped / unmapped), any trusted
 files listed in `priority.md` but missing, the gene link count, and every gene not
 linked or linked by a weaker tier.
@@ -569,9 +582,10 @@ linked or linked by a weaker tier.
   `trusted_ontologes/` (model: `cell_taxonomy.ttl`): look up candidate nodes by label,
   region, or markers, and retrieve the marker gene set needed for the Pass 4 diff.
 - **Deterministic stages** — `scripts/ait_evidence.py` (Pass 2a), `scripts/ait_tables.py`
-  (derive / review sheet / validate), `scripts/ait_gene_diff.py` (Pass 4), `scripts/ait_ttl.py`
-  (the Turtle, always last). Run them; do
-  not reproduce their output by hand.
+  (derive / review sheet / validate), `scripts/ait_gene_diff.py` (Pass 4),
+  `scripts/review_loop.py` / `scripts/record_judge.py` / `scripts/human_feedback.py`
+  (Pass 5), `scripts/ait_ttl.py` (the Turtle, always last). Run them; do not reproduce
+  their output by hand.
 - **GFF / GeneOrthology tools** — normalize gene symbols and resolve cross-species
   orthologs before any gene-set comparison.
 - **StructSense extraction skills**.

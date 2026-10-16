@@ -132,35 +132,70 @@ tries two stages in the same order as the application's `FullTextResolver`:
 | Stage | Route | Needs | Recorded as |
 | --- | --- | --- | --- |
 | 1 | Unpaywall → OpenAlex → Semantic Scholar | nothing (an email for Unpaywall) | `unpaywall_pdf`, `openalex_pdf`, `semanticscholar_pdf` |
-| 2 | the user's own EZproxy session | `EZPROXY_HOST` + session cookie | `ezproxy_pdf` |
+| 2 | the user's own EZproxy session | a one-time browser sign-in (automatic) | `ezproxy_pdf` |
 
 **Open access goes first, and this matters.** A DOI with a free copy costs
 nothing, needs no library session, and doesn't consume one of the user's
 capped proxy requests. A corpus that is largely open access can be assembled
-with no institutional setup at all — so don't ask the user for cookies until
-stage 1 has actually left something unretrieved.
+with no institutional setup at all, and stage 2 only signs in when stage 1 has
+actually left something unretrieved.
 
 ```bash
 # Stage 1 alone — no institutional setup needed
 export SYNTHSCHOLAR_EMAIL=you@example.com    # Unpaywall's ToS requires a contact
 python scripts/fetch_ezproxy.py --corpus corpus.json --oa-only
 
-# Add stage 2 for whatever is left behind a paywall
-export EZPROXY_HOST=ezproxy.myuniversity.edu
-export EZPROXY_MODE=hostname-suffix          # or login-url — check your library's links
-export EZPROXY_COOKIE_FILE=~/ezproxy-cookies.txt
-export EZPROXY_DELAY=3                       # seconds between requests
-export EZPROXY_MAX_REQUESTS=100              # per-run ceiling
-
+# Both stages: the library session is checked at the start (a browser opens
+# only if it is missing or expired), then reused for the whole run
 python scripts/fetch_ezproxy.py --status
 python scripts/fetch_ezproxy.py --corpus corpus.json --pdf-dir ./pdfs
 python scripts/fetch_ezproxy.py --doi-file dois.txt --pdf-dir ./pdfs   # no corpus yet
+
+# Sign in ahead of time, name the institution, or forget the session
+python scripts/fetch_ezproxy.py --login
+python scripts/fetch_ezproxy.py --login --institution "University of Michigan"   # or umich.edu
+python scripts/fetch_ezproxy.py --login --library-link "https://www-nature-com.proxy.lib.umich.edu/…"
+python scripts/fetch_ezproxy.py --logout
 ```
+
+**How the proxy is found**, so the user is never asked for a hostname:
+`--proxy-host`, then `--library-link` (any off-campus article link; the host
+is read out of it), then `--institution`. After those, the saved login, then
+`EZPROXY_HOST`, then the domain of the user's email (`SYNTHSCHOLAR_EMAIL`,
+`NCBI_EMAIL` or `git config user.email`). The proxy works for any
+institution that runs EZproxy; nothing in it is specific to one university.
+- **An institution's full name** is resolved to its domain through
+  [ROR](https://ror.org), the worldwide research-organisation registry. Only
+  ROR's single confident ("chosen") match is used, never a runner-up, so a
+  user is never signed in to someone else's library. "University of Oxford"
+  becomes `ox.ac.uk`.
+- **An acronym** ("mit") is tried only as `<acronym>.edu`, because ROR
+  matches acronyms worldwide.
+- **A domain** is used as given.
+- **From a domain to the proxy:** a short built-in table, then the usual
+  EZproxy hostnames probed in parallel (`ezproxy.<domain>`,
+  `libproxy.<domain>`, `proxy.lib.<domain>`, `<name>.idm.oclc.org`, …). A
+  candidate is accepted only if the server answers as EZproxy.
+
+Exit 4 means none matched. Ask the user for their institution's full name
+or email domain, then for any link their library gives when they open an
+article off campus. The host is read straight out of that link, and this
+path covers proxies with unusual hostnames. Libraries that authenticate
+through OpenAthens or Shibboleth instead of EZproxy are not supported. The URL style
+(`hostname-suffix` or `login-url`) is read from where the login lands.
+
+**The saved session** lives in `~/.config/synthscholar/` (owner-only):
+`ezproxy.json` (host, mode, when), `ezproxy-cookies.txt` (the proxy's own
+cookies only, not the identity provider's), and `browser-profile/`, which
+keeps the institution's "remember this device" so MFA isn't asked every time.
+Before reuse, the session is checked against the proxy. An expired one
+reopens the browser once per run.
 
 | Setting | What it is |
 | --- | --- |
 | `SYNTHSCHOLAR_EMAIL` | polite-pool contact; **Unpaywall is skipped without it** (their ToS). OpenAlex and Semantic Scholar still work |
 | `SEMANTIC_SCHOLAR_API_KEY` | optional; lifts Semantic Scholar's 1 req/s public limit |
+| `EZPROXY_HOST` etc. | **not needed** — manual override of the browser sign-in; set all of host + cookie to use it |
 | `EZPROXY_HOST` | the gateway host from your library's off-campus links |
 | `EZPROXY_MODE` | `hostname-suffix` (`www-sciencedirect-com.ezproxy.uni.edu/…`) or `login-url` (`ezproxy.uni.edu/login?url=…`) |
 | `EZPROXY_COOKIE_FILE` | Netscape `cookies.txt` exported from a browser already signed in to the proxy |
@@ -172,10 +207,33 @@ Flags: `--oa-only` never touches the proxy; `--no-oa` skips open access entirely
 
 Notes that matter:
 
-- **Log in with a browser, not here.** Institutional SSO with MFA can't be
-  scripted responsibly. Export the session cookies instead; they expire, and a
-  login-page bounce is detected and reported rather than silently treated as a
-  paywall.
+- **The user signs in; the script never sees a password.** Institutional SSO
+  with MFA can't be scripted responsibly, so a real browser window is opened
+  and the user completes it themselves. Only the proxy's resulting session
+  cookies are kept. They expire; an expired session is detected before use
+  and the browser reopens, rather than the failure looking like a paywall.
+- **Reading order: the peer-reviewed version first, then fallbacks.** For
+  each paper:
+  1. the published version, through open access and then the proxy;
+  2. its registry-linked preprint, through the same two routes;
+  3. a repository-deposited copy: **Zenodo**, then **arXiv**, matched by
+     exact title *and* first author, and accepted only if it really is a
+     PDF.
+
+  The two-way registry link covers both cases: a supplied preprint DOI is
+  upgraded to its published version, and a published DOI falls back to its
+  preprint. The paper is always **cited** by its published DOI, and what was
+  actually **read** is recorded: `_read_version` (`preprint` /
+  `deposited-copy`), `_read_doi` / `_read_url`, and `_preprint_doi` when the
+  user supplied the preprint. In `--doi` mode the same facts go in the
+  manifest, which `build_corpus.py --manifest` maps back.
+- **Say what was read.** If a study was read from a preprint or a deposited
+  copy, say so in the limitations: results can differ from the published
+  version, so "full text of N studies was read from preprints or author
+  copies" belongs there.
+- **ResearchGate and Academia.edu are never queried.** Their terms forbid
+  automated access. `--no-deposits` skips step 3 and `--as-given` skips
+  version handling altogether.
 - **An open-access miss is not a failure.** Most DOIs have no free copy; that's
   normal and says nothing about the next one. Only *proxied* failures trip the
   stop-after-3 circuit breaker, because those really do indicate a dead session.
@@ -316,6 +374,34 @@ disappears; the fix is to re-point it at the equivalent entry point.
 
 Use when there's no OpenRouter key. You perform the stages; the result is the
 same schema, exported by the same code.
+
+Write every prose field in the formal register of
+[writing_style.md](writing_style.md) from the first draft:
+- study counts rather than "many studies";
+- findings attributed to the included studies;
+- GRADE-matched wording;
+- no AI vocabulary.
+
+It is cheaper than rewriting afterwards. Then run
+`python scripts/check_writing.py review.json` before exporting.
+
+**The paper is assembled from two files.** `review.json` holds the data the
+exporters understand. `review.manuscript.json` holds what makes it a paper
+([review_template.md](review_template.md), schema at the end), and must
+fill:
+- `discussion` (all of 4.1–4.8);
+- `conclusions`;
+- `gaps`, at least five, each with a number;
+- `prior_reviews`, or a "none identified" statement;
+- `abstract`, at least 250 words, with the reading basis;
+- the per-question `results.rq` syntheses;
+- each figure's interpretation.
+
+The app's review model drops fields it doesn't know, so none of these go in
+`review.json`: a re-export would delete them. Run
+`export_review.py review.json --check` before `--outdir`. It reports the
+completeness checks and the template gates together. Then run
+`assemble_manuscript.py review.json --check` until no gate fails.
 
 ```bash
 python scripts/export_review.py --print-template > review.json   # valid example
@@ -458,6 +544,92 @@ python scripts/research_questions.py out/review.json --outdir out/ --themes them
 no switch to turn the view off: a review that declares no research questions
 gets no appendix, no block and no question nodes.
 
+### Citation verification
+
+Run before ingesting, and again after any re-export:
+
+```bash
+python scripts/verify_citations.py out/review.json                 # exit 1 on errors
+python scripts/verify_citations.py out/review.json --apply out/review.verified.json
+python scripts/export_review.py out/review.verified.json --outdir out/ --formats md ttl json
+```
+
+It resolves every included article's DOI (Crossref, then DataCite / other
+agencies) and PMID (PubMed), compares the registered title, first author and
+year with the corpus metadata, and looks up retraction notices from the paper's
+side. It also checks every `PMID:` / DOI / author–year citation in the generated
+text against the included set and the screening log. A BYO corpus is exposed
+here in particular: its DOIs were read off PDF headers by `build_corpus.py`
+and completed by hand. Finding codes, actions, and what `--apply` will and won't
+change: [citation_verification.md](citation_verification.md).
+
+### PDF
+
+```bash
+python scripts/generate_review_pdf.py --check-deps
+python scripts/verify_citations.py out/review.json --style vancouver   # after the last export
+python scripts/review_figures.py out/review.json
+python scripts/assemble_manuscript.py out/review.json --check
+python scripts/generate_review_pdf.py out/review.manuscript.md -o out/review.pdf
+```
+
+**Build the manuscript, not the raw export.** `review.manuscript.md` is the
+paper. The raw `review.md` inlines every record and is what produced
+1,000-page PDFs. Given `review.md`, the builder switches to the manuscript
+beside it, if there is one, and warns otherwise.
+
+**LaTeX route.** On a TeX engine (xelatex, lualatex, tectonic, pdflatex):
+- pandoc writes a standalone `.tex`, kept next to the PDF so every page's
+  source can be inspected or edited. Its converted images go in
+  `<name>_files/` beside it, so the kept `.tex` recompiles on its own;
+- the engine compiles it, running twice for xelatex, lualatex and pdflatex;
+- SVG figures are converted to PDF first, and image paths are made
+  absolute;
+- figures stay where the text puts them, with their captions underneath:
+  they are not floated away.
+
+Typst and the HTML engines are the fallbacks.
+
+**Page guard.** The page count is estimated before rendering (words/550 +
+table rows/45 + 0.4 per image). Over `--page-limit` (default 50), the
+builder stops and names the heaviest sections. After rendering, the real
+count is read from the PDF and enforced again. `--allow-over-limit`
+overrides both.
+
+The script renders the Markdown through pandoc without changing its content:
+- the `# title` becomes the PDF title, and the review's own section numbers are
+  kept (`--number-sections` would double them);
+- `--references <style>` swaps in the verified list from `verify_citations.py --style`;
+- `--include` appends sidecar exports as appendices, each on a new page. One
+  whose title already heads a section of `review.md` is skipped: `appraisal`
+  repeats the review's own *Appendix C*.
+
+**The PRISMA 2020 flow diagram is drawn and placed automatically.** It goes
+under the review's *PRISMA Flow* heading, above the counts table, which
+stays. The counts come from the review's `flow` (`<stem>.json` beside the
+Markdown, or `--flow-json`), with one line per identification source and
+per exclusion reason. `scripts/prisma_flow.py out/review.json --pdf` draws
+it on its own as an SVG and a PDF. Typst and the HTML engines embed the
+SVG; TeX engines need it converted, through rsvg-convert, cairosvg or
+typst. If none of those is installed, the build warns and omits the
+diagram; ask before installing one. `--no-flow-diagram` turns it off.
+
+**No image is cut off.** Each local image's real size is read: PNG, JPEG,
+GIF, SVG or PDF. Only one that would run past the A4 text block gets a cap:
+the text width, or 23 cm tall. Smaller images keep their natural size, and
+a width or height the author already set is never changed.
+
+Cell line breaks (`<br>`), `---` separators and the `✓ ✗ ⚠` symbols are
+rewritten for each engine, so tables keep their rows and the symbols print. On
+TeX engines a font covering the review's characters (`≥ μ κ →` …) is chosen
+with `fc-list` (`--mainfont` overrides), and any glyph still missing is
+reported. The build stops while `review.citations.json` has errors or is older
+than `review.md` (re-verify after the last re-export; `--citations` points at a
+report elsewhere), and warns when there is none. Engines, in the order tried:
+xelatex, lualatex, tectonic, pdflatex, typst, weasyprint, wkhtmltopdf, prince.
+`--pdf-engine` forces one, `--keep-source` writes the Markdown pandoc actually
+read, and `--dry-run` prints the command without running it.
+
 ### Ingestion
 
 `review.ttl` is ready to load as-is — it parses under both rdflib and
@@ -522,8 +694,9 @@ full-text-vs-abstract-only queries, since every PDF-backed article carries a
   the full read.
 - **Deduplication is the user's.** Nothing here detects that two PDFs are the
   same paper; `run_local_review.py` only rejects duplicate `pmid`s.
-- **Institutional access needs a live session.** EZproxy cookies expire, and no
-  amount of retrying fixes that — re-export them. Papers outside the
+- **Institutional access needs a live session.** EZproxy sessions expire, and no
+  amount of retrying fixes that: the script reopens the browser, or run
+  `fetch_ezproxy.py --login`. Papers outside the
   institution's licence simply won't resolve, and those entries stay
   abstract-only (reported as such, not hidden).
 - **Open-access coverage is uneven.** Unpaywall/OpenAlex/Semantic Scholar find

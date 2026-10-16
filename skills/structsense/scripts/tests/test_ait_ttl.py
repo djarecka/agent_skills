@@ -122,7 +122,11 @@ def test_ait_tables_to_validated_ttl(tmp_path):
                      (region, "http://purl.obolibrary.org/obo/UBERON_0001874")):
         concept = g.value(ent, NER.resolvedToConcept)
         assert str(g.value(concept, NER.conceptIRI)) == iri
-    assert "concept mapping (trusted ontologies): mapped BrainRegion 1, Species 1" in out
+    # no concept_mappings.csv yet: ait_ttl ran the map stage (trusted files only) and wrote it
+    assert "ran the concept map stage" in out
+    assert "mapped brain_region 1, gene 1, species 1" in out
+    rows = {r["mention_id"]: r for r in csv.DictReader(open(tmp_path / "concept_mappings.csv"))}
+    assert rows[f"{PID}:M002"]["mapping_source"] == "trusted:annotation-ENSEMBL-9606-109"
     # identifiers are never cut: no label is a shortened CURIE
     assert not [str(o) for o in g.objects(None, RDFS.label) if "…" in str(o) and ":" in str(o)]
 
@@ -136,3 +140,27 @@ def test_long_identifier_names_a_decision_by_its_label():
     assert b.id_name(long_curie, "ABC1", "BKBIT") == "ABC1"
     assert b.id_name("CL:0000617", "GABAergic neuron", "CL") == "CL:0000617"  # fits: the CURIE stays
     assert b.id_name(long_curie, None, "BKBIT") == "BKBIT concept"
+
+
+@pytest.mark.skipif(not (SKILL / "trusted_ontologes" / "Human_BG.ttl").is_file(), reason="needs Human_BG.ttl")
+def test_a_correction_in_concept_mappings_reaches_the_graph(tmp_path):
+    """The Turtle is written from concept_mappings.csv, so a judge/curator correction
+    there (here: a demoted region) is what the graph says — nothing re-maps it."""
+    test_ait_tables_to_validated_ttl(tmp_path)
+    p = tmp_path / "concept_mappings.csv"
+    rows = list(csv.DictReader(open(p)))
+    for r in rows:
+        if r["entity_type"] == "brain_region":
+            r.update(ontology_id="", ontology_label="", ontology="", mapping_source="", match_tier="",
+                     concept_mapping_provenance="unmapped", mapped_by="human", notes="curator: demoted")
+    with open(p, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]), quoting=csv.QUOTE_ALL, lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+    out = _run("scripts.ait_ttl", str(tmp_path), "--text", str(tmp_path / "paper.txt"))
+    assert "ran the concept map stage" not in out and "VALID" in out
+    g = Graph().parse(tmp_path / f"{PID}.ttl")
+    region = g.value(predicate=NER.normalizedEntityKey, object=Literal("putamen"))
+    iris = {str(g.value(c, NER.conceptIRI)) for c in g.objects(region, NER.resolvedToConcept)}
+    assert "http://purl.obolibrary.org/obo/UBERON_0001874" not in iris
+    assert any("curator: demoted" in str(o) for o in g.objects(region, RDFS.comment))

@@ -147,7 +147,11 @@ Empty group questions ⇒ synthesis-only (no per-group Q&A).
 | Field | Tier | Question | Default | Validation |
 | --- | --- | --- | --- | --- |
 | `target_audience` | [+] | "Target audience?" | "" | academic journal / policymaker / industry / thesis |
-| `word_count_target` | [+] | "Target word count?" | 8000 | positive integer |
+| `word_count_target` | [+] | "Target word count?" | 8000 | positive integer. Counts **body prose only** (tables, figures, appendices excluded); the manuscript check warns below 70% |
+| `review_type` | [·] | (silent default) | `"effect"` | `"effect"` (systematic review, GRADE) or `"mapping"` (scoping review, systematic map, resource survey): picks the template variant |
+| `page_limit` | [·] | (silent default) | `50` | int 10–200. The assembled manuscript and the PDF are refused above it |
+| `appendix_policy` | [·] | (silent default) | `"sibling"` | `"sibling"` or `"inline"`; `"inline"` only for corpora under about 40 studies |
+| `review_template` | [·] | (silent default) | `"references/review_template.md"` | path recorded in provenance, so the structure used is auditable |
 | `citation_style` | [+] | "Citation style?" | APA 7 | APA 7 / Vancouver / Harvard / IEEE / Chicago |
 | `section_output_formats` | [A] | "Per-section output format overrides?" | {} | values: descriptive / yes_no / table / bullet_list / numeric |
 | `rubric_section_config` | [A] | "Full per-section title/order/format config?" | [] | optional list |

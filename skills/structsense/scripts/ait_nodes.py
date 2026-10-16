@@ -265,6 +265,49 @@ def _lookup_for_file(f: str) -> GeneLookup:
     return GeneLookup(f)
 
 
+# a gene match tier -> the SKOS relation it supports (identity only on the exact symbol)
+GENE_TIER_TO_SKOS = {"symbol": "exactMatch", "symbol_case": "closeMatch", "synonym": "closeMatch"}
+
+
+def paper_species(entities: Sequence[Dict[str, str]]) -> Tuple[str, str]:
+    """(name, ncbi_taxon_id) of an AIT paper's one experimental species, else ('', '')."""
+    exp = {(r.get("label_verbatim", ""), r.get("ncbi_taxon_id", "")) for r in entities
+           if r.get("entity_type") == "species" and r.get("species_role") == "experimental"}
+    return next(iter(exp)) if len(exp) == 1 else ("", "")
+
+
+def resolve_gene_row(row: Dict[str, str], default_species: Tuple[str, str] = ("", ""),
+                     symbol: Optional[str] = None) -> GeneMatch:
+    """The GeneAnnotation of one `entities.csv` gene row, in its species' trusted annotation.
+
+    The species is the row's `ncbi_taxon_id`, else its `species` name (common or
+    scientific), else `default_species` (the paper's one experimental species).
+    `symbol` overrides the row's `label_normalized` (a reviewer's remap query)."""
+    sym = (symbol or row.get("label_normalized") or row.get("label_verbatim") or "").strip()
+    name, taxon = (row.get("species") or "").strip(), (row.get("ncbi_taxon_id") or "").strip()
+    if not name and not taxon:
+        name, taxon = default_species
+    lk = gene_lookup("", taxon) if taxon else None
+    lk = lk or (gene_lookup(name) if name else None)
+    if lk is None:
+        sp = name or (f"NCBITaxon:{taxon}" if taxon else "")
+        return GeneMatch(sym, reason=f"no trusted gene annotation for species {sp or '(none given)'!r}")
+    return lk.resolve(sym)
+
+
+def gene_concept_fields(gm: GeneMatch) -> Dict[str, str]:
+    """A GeneMatch as the concept-mapping fields every mode records (tool provenance)."""
+    if not gm.iri:
+        return {"concept_mapping_provenance": "unmapped", "notes": gm.reason,
+                "mapping_sources_tried": f"trusted:{Path(gm.file).stem}" if gm.file else "trusted:gene_annotations"}
+    return {"ontology_id": gm.iri, "ontology_label": gm.gene_symbol, "ontology": "BKBIT",
+            "mapping_source": f"trusted:{Path(gm.file).stem}", "match_tier": GENE_TIER_TO_SKOS[gm.tier],
+            "ontology_match_type": f"gene {gm.tier}", "alignment_method": "trusted_ontology",
+            "concept_mapping_provenance": "tool",
+            "notes": "" if gm.tier == "symbol" else
+            f"{gm.symbol!r} matched {gm.gene_symbol!r} by {gm.tier}, not exact symbol: review"}
+
+
 def load(identifier: str, species: Optional[str] = None, *, catalog: Optional[Path] = None,
          directory: Optional[Path] = None) -> Taxonomy:
     from rdflib import RDF, RDFS, URIRef

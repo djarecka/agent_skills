@@ -62,6 +62,10 @@ TEMPLATE = {
     "default_group_questions": [], "per_group_questions": {},
     "appraisal_domains": [],
     "target_audience": "", "word_count_target": 8000, "citation_style": "APA 7",
+    # Manuscript template (references/review_template.md). Silent defaults: the
+    # skill reads them; the app's ReviewProtocol does not carry them yet.
+    "review_type": "effect", "page_limit": 50, "appendix_policy": "sibling",
+    "review_template": "references/review_template.md",
     "section_output_formats": {},
     "registration_number": "", "protocol_url": "",
     "funding_sources": "", "competing_interests": "",
@@ -206,6 +210,25 @@ def validate(p: dict) -> tuple[list[str], list[str]]:
             "of each article are read for evidence — results/discussion may be cut. "
             "Use 0 (whole article) unless you are deliberately bounding cost."
         )
+
+    # Manuscript template fields (review_template.md).
+    rt = p.get("review_type")
+    if rt is not None and rt not in ("effect", "mapping"):
+        errors.append(f"review_type '{rt}' invalid; 'effect' (systematic review) or 'mapping' "
+                      "(scoping review / systematic map / resource survey)")
+    pl = p.get("page_limit")
+    if pl is not None and (not isinstance(pl, int) or isinstance(pl, bool) or not 10 <= pl <= 200):
+        errors.append(f"page_limit must be an integer 10–200 (got {pl!r})")
+    ap = p.get("appendix_policy")
+    if ap is not None and ap not in ("sibling", "inline"):
+        errors.append(f"appendix_policy '{ap}' invalid; 'sibling' (default) or 'inline'")
+    wct = p.get("word_count_target")
+    if isinstance(pl, int) and isinstance(wct, int) and pl and wct / pl > 250:
+        warnings.append(f"word_count_target {wct} over {pl} pages is {wct // pl} words/page of prose — "
+                        "more than the page limit holds alongside tables, figures and references (≤ 250)")
+    if ap == "inline" and isinstance(p.get("max_articles"), int) and p["max_articles"] > 40:
+        warnings.append("appendix_policy 'inline' with a corpus that may exceed ~40 studies — per-record "
+                        "appendices inline will break the page limit; keep 'sibling'")
 
     # Soft nudge: comparison legitimately optional, but flag if PICO looks thin.
     if empty(p.get("pico_comparison")):

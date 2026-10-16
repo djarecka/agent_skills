@@ -1,6 +1,6 @@
 ---
 name: synthscholar
-version: 0.3.0
+version: 0.6.0
 description: Set up, run, and query SynthScholar / PRISMA systematic reviews. (1) Protocol intake — draft a complete protocol (research question, PICO, eligibility, databases, risk-of-bias tool, charting, per-group analysis, registration) and validate it before a run. (2) Provenance queries over a finished review — full-text vs abstract-only inclusions, retrieval routes, and the screening audit trail (decisions on full text vs abstract, exclusion reasons per stage), via SPARQL over the RDF export or SQL over the article store. (3) Bring-your-own-corpus review — the user supplies PDFs, or DOIs whose full text is fetched open access (Unpaywall, OpenAlex, Semantic Scholar) then via their own institutional EZproxy access; produces the full PRISMA review (screening, charting, appraisal, synthesis) as Markdown and SLR-ontology Turtle. Use when asked to start or scope a review, run a review over supplied PDFs, get full text for a DOI, export a review to md/ttl, or audit full-text and screening provenance.
 license: Apache-2.0
 ---
@@ -163,6 +163,37 @@ python scripts/run_local_review.py --protocol protocol.json --corpus corpus.json
 # 5. Provenance added late (if the user didn't have it in step 3)
 python scripts/update_provenance.py out/review.json \
     --provenance search_provenance.json --outdir out/
+
+# 6a. Writing — the prose must read as a formal review, not generated text.
+#     Rewrite every flagged sentence in out/review.json (prose only; see
+#     references/writing_style.md), repeat until clean, then re-export.
+python scripts/check_writing.py out/review.json
+python scripts/export_review.py out/review.json --outdir out/ --formats md ttl json
+
+# 6b. Citations — gate before handing the review over (exit 1 on errors).
+#    --apply writes registry-confirmed fixes to a copy; re-export it over the
+#    review, then verify again so the report describes what will ship.
+python scripts/verify_citations.py out/review.json
+python scripts/verify_citations.py out/review.json --apply out/review.verified.json
+python scripts/export_review.py out/review.verified.json --outdir out/ --formats md ttl json
+python scripts/verify_citations.py out/review.json --style vancouver
+
+# 7. Manuscript — the paper, in the template's order (references/review_template.md).
+#    Draw the figures, write out/review.manuscript.json (Discussion 4.1–4.8,
+#    prior reviews, gaps, confidence, figure interpretations, declarations),
+#    assemble, and clear the gates. Re-run check_writing on the manuscript.
+python scripts/export_review.py out/review.json --outdir out/ --formats md ttl json charting appraisal per-group
+python scripts/review_figures.py out/review.json                 # out/figures/*.svg + figures.json
+python scripts/assemble_manuscript.py out/review.json --check    # out/review.manuscript.md
+python scripts/check_writing.py out/review.manuscript.md
+
+# 8. PDF — Markdown → LaTeX → PDF (the .tex is kept), in the ACM journals
+#    layout (acmart acmsmall, bundled in assets/acmart/). Refuses past
+#    page_limit (estimated before rendering, counted after), and while
+#    out/review.citations.json has errors or is older than review.json.
+python scripts/generate_review_pdf.py out/review.manuscript.md
+# Existing reviews with no PDF yet (or an outdated one): find and build them all
+python scripts/generate_review_pdf.py --batch out/ ~/reviews/
 ```
 
 Step 4 needs `OPENROUTER_API_KEY` and the `synthscholar` package — it drives
@@ -188,11 +219,82 @@ python scripts/research_questions.py out/review.json --outdir out/
 python scripts/research_questions.py out/review.json --outdir out/ --themes themes.json
 ```
 
+### Report structure and length
+
+The final review is the **assembled manuscript**, `review.manuscript.md`.
+It follows
+[references/review_template.md](references/review_template.md): the
+section order, per-section source slots, word and page budgets, the figure
+plan and the export gates. It comes in two variants, set by `review_type`:
+`effect` for systematic reviews (GRADE, optional meta-analysis) and
+`mapping` for scoping reviews, systematic maps and resource surveys. The
+data stays in `review.json`. The prose that makes it a paper goes in
+`review.manuscript.json`: Discussion §4.1–4.8, prior reviews, gaps, the
+confidence statement, figure interpretations and declarations.
+`assemble_manuscript.py` renders the two. The pipeline's raw `review.md`
+is an export, not the paper.
+
+Hard rules:
+
+- **50 pages maximum** (`page_limit`). Per-record material is exported as
+  sibling files and linked, never inlined: full charting tables, evidence
+  spans, URL checks, the excluded list, the resource ↔ publication map. The
+  PDF builder refuses a document over the limit before rendering, so a
+  1,300-page PDF cannot happen. Fix an overrun by moving appendices out,
+  never by cutting the Discussion.
+- **No empty declared section.** Every heading is emitted, numbered without
+  gaps. A section with no data says "Not assessed: <reason>". The
+  Discussion's principal findings, interpretation, comparison, implications
+  and research agenda, and the Conclusions, are mandatory.
+- **Figures where a human author would put them.** `review_figures.py`
+  draws the standard set, and only when the data supports each figure. Its
+  `facts` give the numbers: write each figure's interpretation from them,
+  and refer to it in the section's prose as `{fig:<id>}`. The assembler
+  numbers the figures and places each under the paragraph that introduces
+  it. No decorative charts, and at most 10 to 12.
+- **For resource and landscape surveys (`mapping`)**, the primary unit is
+  the *system*, not the publication. §3.3 renders the deduplicated
+  inventory, and every count in the body says whether it counts resources
+  or publications.
+
 ### Rules for this mode
+
+- **Write the Discussion, not just the limitations.** A review whose
+  Discussion is a limitations list has not been synthesised. Principal
+  findings per research question, interpretation, comparison with prior
+  reviews, implications and a research agenda are required (template §4).
+- **Keep the manuscript a manuscript.** Check the page estimate
+  (`assemble_manuscript.py --check`) before building the PDF. Move
+  appendices to sibling files rather than cutting synthesis.
 
 - **Complete the corpus metadata yourself** from each entry's `_head_text` —
   don't hand the user a list of fields to fill. Never invent a DOI or year;
   leave it empty instead.
+- **Identify every paper by its published version, with its PMID.** These
+  rules apply to the reference list, in-text citations and fetching alike:
+  - **Cite the peer-reviewed version.** When a study exists as both a
+    preprint and a peer-reviewed article, cite, fetch and read the
+    peer-reviewed article. Its venue DOI is the article's DOI.
+  - **Add the PubMed ID wherever PubMed has the article.**
+  - **Read the published version where possible.** If neither open access
+    nor the proxy can reach it, read its preprint, then a copy deposited on
+    Zenodo or arXiv, but still cite the published DOI. Say in the
+    limitations which studies were read from a preprint or a deposited
+    copy. ResearchGate and Academia.edu are never used.
+  - **Cite a preprint only when no peer-reviewed version exists.** Label it
+    as a preprint, and say in the limitations that it is not peer-reviewed.
+
+  The scripts do this:
+  - `fetch_ezproxy.py` tries the published version first.
+  - `verify_citations.py` reports a preprint with a published version,
+    adds missing PMIDs, and `--apply` makes both changes, rewriting the
+    article's id everywhere it appears in the review.
+  - The styled reference list ends each entry with its PMID.
+
+  A switched version may report different numbers: re-check the extracted
+  results against the published text. A preprint and its published version
+  are one study, and including both is an error: exclude one and correct
+  the PRISMA counts.
 - **Ask for the search strategy, but never block on it.** Databases, exact
   query strings, dates searched, filters, records identified, duplicates
   removed — ask as one batch of structured questions. If the user doesn't have
@@ -212,10 +314,28 @@ python scripts/research_questions.py out/review.json --outdir out/ --themes them
   synthesis attributable.
 - **Try open access before asking for a library session.** `fetch_ezproxy.py`
   resolves DOIs through Unpaywall → OpenAlex → Semantic Scholar first, which
-  needs no setup; only what's left behind a paywall needs the user's own
-  EZproxy cookies. Don't ask for credentials until `--oa-only` has run and
-  something is still missing. Then keep within their licence: one paper at a
-  time, delayed, capped, and never raise the ceiling on their behalf.
+  needs no setup; only what's left behind a paywall needs the user's library
+  sign-in. **Never ask the user to set `EZPROXY_*` variables or export
+  cookies.** Run `fetch_ezproxy.py` and it signs them in itself, **at the
+  start of the run**. The saved session is checked first; if there is none,
+  or it has expired, a browser window opens at their library's login before
+  any fetching. So a long run never stalls halfway, waiting on a window
+  nobody saw. A live session passes without a browser. For a long session
+  (fetching, then the review), sign in once up front with
+  `fetch_ezproxy.py --login`. `--lazy-login` restores on-demand sign-in.
+  Tell them it's coming ("a browser window will open; sign in with
+  your library account"), and run the command with a long timeout (it waits
+  up to 5 minutes for them). The proxy is found from their email domain,
+  for any university that runs EZproxy. If the script exits 4, ask one
+  question, "Which university or library do you get journal access
+  through?", and pass the answer as `--institution`. It takes the full
+  name (looked up in ROR) or the email domain. Never assume a particular
+  university.
+  If it still exits 4, ask for any link their library gives when they open
+  an article, and pass it as `--library-link`. Exit 3 means Playwright is
+  missing: ask before installing it (dependency table below). Keep within
+  their licence: one paper at a time, delayed, capped, and never raise the
+  ceiling on their behalf.
 - **Report the reading basis when you summarise.** "23 of 25 read in full text,
   2 included on abstract alone" is different evidence from "25 included".
 - **The research questions organise themselves — declare them in
@@ -227,7 +347,57 @@ python scripts/research_questions.py out/review.json --outdir out/ --themes them
   question IRIs. Never hand-assemble that view or paste the answers into the
   synthesis: it is generated, and a hand-made copy goes stale on the next
   export.
-- **Always offer both exports.** `.md` to read, `.ttl` to ingest.
+- **The review's prose is formal scientific writing and must not read as
+  generated.** Write it that way from the start when you author the review
+  (Path B). Either path ends with a revision pass:
+  `check_writing.py out/review.json` flags each sentence with an AI pattern
+  or an informal register, and you rewrite those sentences **in
+  `review.json`**, following
+  [references/writing_style.md](references/writing_style.md):
+  - count studies ("seven of 12"), not "many studies";
+  - attribute findings to studies, not to "research";
+  - "significant" only with its test;
+  - "associated with" for observational evidence;
+  - GRADE wording that matches the certainty ("probably" at moderate, "may"
+    at low);
+  - no contractions, reader address, stacked hedges or "paves the way".
+
+  Change only the review's own prose: never quoted evidence, charted
+  answers, numbers, citations, ratings or research questions. A rewrite
+  never adds a claim or a number the review's data doesn't hold. After
+  rewriting, re-run the checker until it reports no errors, then re-export
+  and re-verify citations. The checker catches patterns, not argument, so
+  read the prose through once as well.
+- **Verify citations before handing the review over.** Run
+  `verify_citations.py` on `review.json` after every export. It resolves each
+  included article's DOI and PMID against Crossref / DataCite / PubMed, compares
+  the registered title, author and year with the review's, flags retractions,
+  and checks that every PMID, DOI and author–year citation in the generated
+  prose belongs to an included study. Clear the errors before ingesting. Fix
+  references from the registry (`--apply` does the registry-confirmed ones),
+  remove or re-attribute claims that cite excluded or unknown studies, and tell
+  the user about retracted studies rather than dropping them silently. Never
+  make a citation pass by inventing a DOI or by adopting a `doi-candidate`
+  the user hasn't confirmed. Finding codes and the response to each:
+  [references/citation_verification.md](references/citation_verification.md).
+- **Always offer both exports.** `.md` to read, `.ttl` to ingest. Offer a PDF
+  (`generate_review_pdf.py`) when the review is going to people: it renders
+  `review.md` as is, so fix content in `review.json` and re-export rather than
+  editing the PDF's source. It stops while `review.citations.json` reports
+  errors. Pass `--allow-citation-errors` only when the user explicitly accepts
+  a PDF with unresolved citations, and say so when you hand it over.
+  Needs `pandoc` and a TeX engine for the paper layout (`--check-deps`).
+  The manuscript is typeset in the **ACM journals layout** (`acmart`,
+  `acmsmall`: the class behind Overleaf's "ACM Journals Primary Article
+  Template"), with the abstract and keywords in the title block, figures as
+  numbered floats with their captions, and tables a size smaller than the text.
+  The class is bundled in `assets/acmart/` (LPPL, unmodified), so nothing is
+  fetched per build; `--layout plain` gives pandoc's article layout instead.
+  Without TeX the script falls back to typst/HTML in the plain layout and says
+  so; ask before installing TeX. When the user has earlier reviews without a
+  PDF, offer `--batch <dir>`: it finds every exported review under the folder,
+  re-assembles a stale manuscript and builds each missing or outdated PDF
+  (`--force` rebuilds all).
 - **Ingesting into BrainKB is the `brainkb` skill's job — hand off, don't
   improvise.** Its *"Ingest a SynthScholar review"* section owns the graph IRI
   (`https://brainkb.org/synthscholar/reviews/<review_id>/`, registered to a
@@ -272,6 +442,12 @@ parity: `slr:content_hash` in RDF equals `article_full_text.content_sha256`.
 - Wants an existing review **exported to Markdown or Turtle**, or the **TTL
   ingested** into a triple store / BrainKB.
 - Wants to **add or correct the search strategy** on a review that already ran.
+- Wants the **citations of a review (or any Markdown manuscript) verified**:
+  DOIs/PMIDs real and pointing at the cited paper, retractions, in-text
+  citations matching the included studies, or a reference list in APA /
+  Nature / Vancouver / IEEE.
+- Wants the review **as a PDF**, optionally with the charting / appraisal /
+  per-group / citation report appended.
 
 **Queries (Mode 2)** — when the user asks to:
 
@@ -281,6 +457,7 @@ parity: `slr:content_hash` in RDF equals `article_full_text.content_sha256`.
 - **Audit provenance** — which resolver produced each full text (`pmc_oa`,
   `europe_pmc_oa`, `unpaywall_pdf`, `biorxiv_pdf`, `openalex_pdf`,
   `semanticscholar_pdf`, `ezproxy_pdf` — institutional subscription access —
+  `zenodo_pdf`, `arxiv_pdf` — deposited copies, the last resort —
   `user_supplied_pdf`, `article_store`, `cache`) and when.
 - **Ask what the review actually read** — how many reports were retrieved vs
   not, how many eligibility decisions were made on full text vs abstract only,
@@ -323,6 +500,32 @@ full-text availability from the length of an abstract.
 
 ## Helper scripts
 
+### Check dependencies before running — ask, don't install silently
+
+Before the first run of a script in a session, check what it needs (table
+below). If something is missing, **ask the user before installing it**: use
+`AskUserQuestion` in Claude Code, with the install command as the
+recommended option and "skip this step" as the alternative. Never `pip
+install`, `conda install` or `brew install` without that confirmation. Pick
+the command for their environment: an active conda env → `conda`/`pip`
+there, a `uv` project → `uv add`, otherwise `pip`. If they decline, say which
+step can't run and carry on with the rest.
+
+| Script | Needs | Check | Install (on confirm) |
+| --- | --- | --- | --- |
+| `verify_citations.py`, `fetch_ezproxy.py` | `httpx` | `python -c "import httpx"` | `pip install httpx` |
+| `fetch_ezproxy.py` library sign-in (paywalled papers only) | `playwright` + Chrome, Edge or Playwright's Chromium | `python -c "import playwright"` | `pip install playwright` (+ `playwright install chromium` only if neither Chrome nor Edge is installed) |
+| `query_sparql.py` | `rdflib` | `python -c "import rdflib"` | `pip install rdflib` |
+| `query_postgres.py`, `backfill_full_text.py` | `psycopg` | `python -c "import psycopg"` | `pip install "psycopg[binary]>=3.1"` |
+| `build_corpus.py` | `pymupdf`; `docling` optional | `python -c "import fitz"` | `pip install pymupdf` (+ `pip install docling` for scans/tables) |
+| `export_review.py`, `run_local_review.py`, `update_provenance.py` | `synthscholar` dev checkout | the script refuses with a message | `pip install -e /path/to/prisma-review-agent` (ask for the path) |
+| `generate_review_pdf.py` | `pandoc` + a **TeX engine** (xelatex, lualatex, pdflatex or tectonic) for the ACM layout; `rsvg-convert` (or `cairosvg`/`typst`) to convert SVG figures for TeX; `fc-list` optional. Without TeX: `typst` or an HTML engine, plain layout only | `python scripts/generate_review_pdf.py --check-deps` (also finds a TeX Live/MacTeX install that is not on `PATH`) | TeX: `brew install --cask mactex-no-gui` (macOS), `apt-get install texlive-xetex texlive-fonts-extra texlive-latex-extra` (Debian/Ubuntu), or `conda install -c conda-forge tectonic` (smallest; fetches packages once into its cache). Then `conda install -c conda-forge pandoc librsvg` (or `brew install pandoc librsvg`). The ACM class itself is bundled in `assets/acmart/` |
+| `validate_protocol.py`, `research_questions.py`, `check_writing.py`, `review_figures.py`, `assemble_manuscript.py` | stdlib | — | — |
+
+Network services (Crossref, PubMed, Unpaywall) and `OPENROUTER_API_KEY` are
+not installs: mention them if a run will need them, and ask the user for any
+key. Never invent one.
+
 All live in [scripts/](scripts/). Run them from an environment where the
 project's deps are importable (`rdflib` for SPARQL, `psycopg[binary]>=3.1` for
 SQL; the backfill also needs the `synthscholar` package on `PYTHONPATH`). The
@@ -335,7 +538,7 @@ and uses the PyMuPDF chain, and `--no-docling` skips it deliberately.
 not the released package** — `pip install -e /path/to/prisma-review-agent`. The
 PyPI build predates the whole-document reading and screening-basis provenance,
 and they refuse to run on it rather than silently dropping those fields.
-`fetch_ezproxy.py` works anywhere — it needs only `httpx`, since the skill
+`fetch_ezproxy.py` and `verify_citations.py` work anywhere — they need only `httpx`, since the skill
 vendors both `scripts/oa_client.py` (the open-access DOI chain) and
 `scripts/ezproxy_client.py` (`synthscholar.ezproxy` ships only in the checkout).
 
@@ -354,6 +557,13 @@ python scripts/run_local_review.py --protocol protocol.json --corpus corpus.json
 python scripts/export_review.py out/review.json --outdir out/ --formats md ttl
 python scripts/research_questions.py out/review.json --outdir out/   # retrofit only
 python scripts/update_provenance.py out/review.json --provenance search_provenance.json
+python scripts/check_writing.py out/review.json                        # AI-voice / register pass
+python scripts/verify_citations.py out/review.json                     # citation gate
+python scripts/verify_citations.py out/review.json --style apa --apply out/review.verified.json
+python scripts/assemble_manuscript.py out/review.json --check
+python scripts/generate_review_pdf.py out/review.manuscript.md
+python scripts/generate_review_pdf.py --batch out/                    # PDFs for reviews that lack one
+python scripts/generate_review_pdf.py --check-deps                     # pandoc + TeX + acmart?
 
 # SPARQL over an RDF export — named recipe or your own query
 python scripts/query_sparql.py review.ttl --query included-full-text
@@ -380,6 +590,18 @@ scripts) to see every named recipe.
 - [references/byo_corpus_review.md](references/byo_corpus_review.md) —
   bring-your-own-corpus workflow: corpus schema, search-provenance intake,
   PRISMA-flow accounting, the two execution paths, exports and ingestion.
+- [references/citation_verification.md](references/citation_verification.md) —
+  what `verify_citations.py` checks, every finding code with the action it
+  calls for, `--apply` semantics, and the reference styles.
+- [references/review_template.md](references/review_template.md) — the
+  manuscript section plan, for both the `effect` and `mapping` variants: the
+  source slot, required content, word and page budget and export gate for
+  every section, the figure plan, the 50-page appendix policy, and the
+  `review.manuscript.json` schema.
+- [references/writing_style.md](references/writing_style.md) — the formal
+  register the review's prose must meet: review-specific rules (study counts,
+  attribution, GRADE wording), the AI-writing patterns `check_writing.py`
+  flags, what a rewrite may never touch, and the revision pass.
 - [references/sparql_queries.md](references/sparql_queries.md) — SPARQL recipe catalog.
 - [references/sql_queries.md](references/sql_queries.md) — SQL recipe catalog.
 - [references/data_model.md](references/data_model.md) — the SLR-ontology terms
@@ -410,7 +632,9 @@ scripts) to see every named recipe.
   paywalled paper with no repository copy misses on all three providers.
   Unpaywall additionally needs `SYNTHSCHOLAR_EMAIL` (their ToS) and is skipped
   without it.
-- Institutional access (EZproxy) needs a live browser-exported session cookie
-  and only reaches what the institution licenses. Credentials go in
-  `EZPROXY_*` env vars, never on a command line — the CLI invocation is stored
-  verbatim in provenance.
+- Institutional access (EZproxy) reaches only what the institution licenses.
+  The browser sign-in saves the proxy's session cookies under
+  `~/.config/synthscholar/` (owner-only permissions), never the password, and
+  `fetch_ezproxy.py --logout` deletes them. A session lasts hours, and the
+  browser reopens by itself when it expires. Never put a cookie on a command
+  line: the CLI invocation is stored verbatim in provenance.

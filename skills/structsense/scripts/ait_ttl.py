@@ -17,17 +17,13 @@ identity (UUIDv5 keys), provenance and the gate (`validate_ttl.py`) are identica
   `ait_nodes`, never constructed), with a `ner:ConceptMappingDecision` carrying the
   basis, the mapping evidence, the curator notes and the Pass 4 marker diff; a
   `none` row is recorded as a gap comment with its `no_match_reason`;
-* every gene row is linked to its `GeneAnnotation` in the species' trusted genome
-  annotation (`ait_nodes.GeneLookup`; catalog `gene_annotations`): exact symbol ->
-  `skos:exactMatch`, same symbol in another case or a synonym -> `skos:closeMatch`,
-  each with a tool-provenance mapping decision; an ambiguous or unknown symbol, or a
-  species with no trusted annotation, is a gap comment and listed in the report;
-* every other extracted entity (species, brain regions, cell types without an AIT
-  edge) is concept-mapped against the trusted ontologies only
-  (`concept_mapping`, sources = trusted: `trusted_ontologes/priority.md` order,
-  `label_routing` per class — Species -> NCBITaxon, BrainRegion -> UBERON, CellType
-  -> CL > PCL); offline, tool provenance, never from memory. Genes are not sent to
-  it: their trusted source is the genome annotation above;
+* every other entity's ontology term comes from `concept_mappings.csv`, the review
+  loop's concept map stage (`review_loop map --mode ait`): genes -> their
+  `GeneAnnotation` in the species' ENSEMBL/NCBI genome annotation, species / brain
+  regions / cell types -> the trusted ontologies first. Reading that table (not
+  mapping again) is what makes judge and curator corrections reach the graph. When
+  the table is missing, the map stage is run here with the trusted files only and the
+  table is written;
 * `entities.marker_genes` become paper-stated `expresses` (RO:0002292) edges when a
   sentence of the paper names both the cell type and the gene (that sentence is the
   evidence); a marker with no such sentence is reported, not written.
@@ -59,7 +55,6 @@ from rdflib import Literal, URIRef  # noqa: E402
 from rdflib.namespace import RDFS, XSD  # noqa: E402
 
 VARIANT = "ait:cell-type-mapping"
-GENE_TIER_TO_SKOS = {"symbol": "exactMatch", "symbol_case": "closeMatch", "synonym": "closeMatch"}
 CLASS_BY_TYPE = {"gene": "Gene", "species": "Species", "brain_region": "BrainRegion"}
 FINE_LEVELS = {"supertype", "cluster", "type"}
 
@@ -183,10 +178,7 @@ def build_result(data: Dict[str, List[Dict[str, str]]], text: str, *, source: Op
             mid = by_surface.get((folded, it["label"]))
         if not mid:
             continue
-        it.update({"identity_key": keys[mid], "ait_mention_id": mid, "source_model": src_model,
-                   # concept mapping looks up the row's normalized name, not this surface
-                   # (a surface can carry a preprint margin line number or an adjective form)
-                   "mapping_query": row_of[mid].get("label_normalized") or row_of[mid]["label_verbatim"]})
+        it.update({"identity_key": keys[mid], "ait_mention_id": mid, "source_model": src_model})
         it.pop("concept_mapping_provenance", None)
         out_items.append(it)
     mentioned = {it["ait_mention_id"] for it in out_items}
@@ -249,50 +241,17 @@ class AitTurtleBuilder(j2t.TurtleBuilder):
     ait_edges: Dict[str, List[dict]] = {}
     ait_cards: Dict[Tuple[str, str], dict] = {}
     ait_nodes_by_tax: Dict[str, "ait_nodes.Taxonomy"] = {}
-    gene_links: Dict[str, "ait_nodes.GeneMatch"] = {}
-
-    def emit_gene(self, ent: dict, matches: List["ait_nodes.GeneMatch"]) -> bool:
-        """Link a gene entity to its GeneAnnotation; False when no match resolved."""
-        done = False
-        for gm in matches:
-            if not gm.iri:
-                continue
-            ref = j2t.concept_ref(gm.iri, None, self.cfg, self.registry)
-            if not ref or ref[2] == "UNREGISTERED":
-                self.warnings.append(f"{gm.iri} is in no registered namespace; gene link not written")
-                continue
-            skos = GENE_TIER_TO_SKOS[gm.tier]
-            concept = self.concept_node(ref, {"ontology_label": gm.gene_symbol or gm.symbol})
-            if (concept, RDFS.comment, None) not in self.g:
-                self.add(concept, RDFS.comment, Literal(
-                    f"GeneAnnotation {gm.gene_symbol} (trusted_ontologes/{gm.file})"))
-            self.add(ent["node"], j2t.NER.resolvedToConcept, concept)
-            self.add(ent["node"], j2t.MATCH_TIERS[skos], URIRef(ref[0]))
-            it = {"mapping_source": "trusted", "ontology_match_type": f"gene {gm.tier}",
-                  "alignment_method": f"ait_nodes gene lookup ({gm.file})"}
-            self.emit_decision(ent, concept, ref, self.cfg.relation_by_tier.get(skos, "close"), it, gm.iri)
-            if gm.tier != "symbol":
-                dec = ent["decisions"][gm.iri][0]
-                self.add(dec, RDFS.comment, Literal(
-                    f"{gm.symbol!r} matched {gm.gene_symbol!r} by {gm.tier}, not exact symbol: review"))
-            ent.setdefault("concept_ids", []).append(gm.iri)
-            self.counts["mapped_concepts"] += 1
-            self.counts["gene_links"] += 1
-            done = True
-        return done
+    concept_notes: Dict[str, str] = {}
 
     def emit_mapping(self, ent: dict):
         mids = {it.get("ait_mention_id") for grp in ent["groups"] for it in grp["items"]}
-        genes = [self.gene_links[m] for m in sorted(mids) if m in self.gene_links]
-        if genes:
-            if self.emit_gene(ent, genes):
-                return
-            why = "; ".join(sorted({g.reason for g in genes if g.reason})) or "not resolved"
-            self.add(ent["node"], RDFS.comment, Literal(
-                f"No GeneAnnotation link ({why}); checked on {self.date}."))
-            return super().emit_mapping(ent)
         edges = [e for m in mids for e in self.ait_edges.get(m, [])]
         if not edges:
+            # the concept row (concept_mappings.csv) is on the items; its note says why
+            # a term was weak or missing
+            for m in sorted(mids):
+                if self.concept_notes.get(m):
+                    self.add(ent["node"], RDFS.comment, Literal(f"concept mapping: {self.concept_notes[m]}"))
             return super().emit_mapping(ent)
         emitted, gaps = 0, []
         for e in edges:
@@ -337,77 +296,68 @@ class AitTurtleBuilder(j2t.TurtleBuilder):
             self.counts["unmapped_entities"] += 1
 
 
-def paper_species(entities: List[Dict[str, str]]) -> Tuple[str, str]:
-    """(name, ncbi_taxon_id) of the paper's one experimental species, else ('', '')."""
-    exp = {(r["label_verbatim"], r.get("ncbi_taxon_id", "")) for r in entities
-           if r["entity_type"] == "species" and r.get("species_role") == "experimental"}
-    return next(iter(exp)) if len(exp) == 1 else ("", "")
+CONCEPT_FIELDS = ("ontology_id", "ontology_label", "ontology", "mapping_source", "match_tier")
 
 
-def concept_map(result: dict, text: str, skip: frozenset = frozenset()) -> dict:
-    """Map the non-gene entities of the working result against the trusted ontologies.
+def concept_rows(out_dir: Path, data: Dict[str, List[Dict[str, str]]]) -> Tuple[List[Dict[str, str]], bool]:
+    """(concept_mappings.csv rows, ran_map_stage). Runs the map stage, trusted files
+    only, and writes the table when it is missing."""
+    from scripts import review_loop as rl
+    p = out_dir / rl.CONCEPT_TABLE
+    if p.exists():
+        return ait_tables.read_table(p)[1], False
+    rl.map_ait(data, rl.Tools(offline=True))
+    import csv
+    with open(p, "w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL, lineterminator="\n")
+        w.writerow(rl.CONCEPT_COLUMNS)
+        for r in data[rl.CONCEPT_TABLE]:
+            w.writerow([r.get(c, "") or "" for c in rl.CONCEPT_COLUMNS])
+    return data[rl.CONCEPT_TABLE], True
 
-    Flow: extraction (the tables) -> concept mapping (trusted files only) -> Turtle.
-    The lexicon is built on first use (`concept_mapping index`, incremental). `skip`:
-    mention ids whose mapping is an AIT edge (written from mappings.csv instead)."""
-    from scripts import concept_mapping as cm
-    mapper = cm.ConceptMapper(cm.load_config(), sources=["trusted"])
-    rep = {"sources": ["trusted"], "mapped": {}, "unmapped": {}, "missing_files": []}
-    if not mapper.usable_sources():
-        rep["error"] = "no trusted ontology is indexed or present"
-        return rep
-    rep["missing_files"] = [s.spec["file"] for s in mapper.trusted.lexicon.missing_files()]
-    items = [it for it in result["entities"]
-             if it.get("label") != "Gene" and it.get("ait_mention_id") not in skip]
-    sub_result = {"entities": items}
-    cm.map_result(sub_result, mapper, texts=[text])
-    result.setdefault("stats", {})["alignment"] = sub_result["stats"]["alignment"]
-    seen = set()
-    for it in items:
-        key = (it.get("identity_key"), it.get("label"))
-        if key in seen:
+
+def apply_concepts(result: dict, rows: List[Dict[str, str]], entities: List[Dict[str, str]],
+                   skip: frozenset = frozenset()) -> dict:
+    """Put each concept row on its entity's items (the fields json_to_ttl writes) and
+    count, per entity type, what is mapped. `skip`: mention ids whose mapping is an AIT
+    edge (written from mappings.csv instead)."""
+    by_mid = {r["mention_id"]: r for r in rows}
+    for it in result["entities"]:
+        r = by_mid.get(it.get("ait_mention_id"))
+        if not r or it.get("ait_mention_id") in skip:
             continue
-        seen.add(key)
-        bucket = "mapped" if it.get("ontology_id") else "unmapped"
-        rep[bucket][it["label"]] = rep[bucket].get(it["label"], 0) + 1
-    return rep
-
-
-def link_genes(rows: List[Dict[str, str]], default_species: Tuple[str, str] = ("", "")
-               ) -> Tuple[Dict[str, "ait_nodes.GeneMatch"], dict]:
-    """{mention_id: GeneMatch} for every gene row. Code only: never from memory.
-
-    The species of a gene row is its `ncbi_taxon_id`, else its `species` name (common or
-    scientific), else `default_species` (the paper's one experimental species). The
-    annotation is the catalog's `gene_annotations` entry for it (ENSEMBL or NCBI
-    gff2jsonld output in trusted_ontologes/). Every row ends linked or with a reason."""
-    links: Dict[str, "ait_nodes.GeneMatch"] = {}
-    rep = {"rows": len(rows), "linked": 0, "weaker_tier": [], "unresolved": [], "no_annotation": [],
-           "species_from_paper": [], "files": {}}
-    for r in rows:
-        symbol = r.get("label_normalized") or r["label_verbatim"]
-        name, taxon = (r.get("species") or "").strip(), (r.get("ncbi_taxon_id") or "").strip()
-        if not name and not taxon:
-            name, taxon = default_species
-            if name or taxon:
-                rep["species_from_paper"].append(symbol)
-        lk = ait_nodes.gene_lookup("", taxon) if taxon else None
-        lk = lk or (ait_nodes.gene_lookup(name) if name else None)
-        if lk is None:
-            sp = name or (f"NCBITaxon:{taxon}" if taxon else "")
-            gm = ait_nodes.GeneMatch(symbol, reason=f"no trusted gene annotation for species {sp or '(none given)'!r}")
-            rep["no_annotation"].append(f"{symbol} ({sp or 'no species'})")
+        if r.get("concept_mapping_provenance") == "tool" and r.get("ontology_id"):
+            it.update({k: r.get(k) or None for k in CONCEPT_FIELDS})
+            it["concept_mapping_provenance"] = "tool"
+            it["alignment_method"] = ("trusted_ontology" if (r.get("mapping_source") or "").startswith("trusted")
+                                      else "direct_tool_call")
+            if r.get("mapped_by") == "human":
+                it["alignment_method"] += "; pinned by a curator"
         else:
-            gm = lk.resolve(symbol)
-            if gm.iri:
-                rep["linked"] += 1
-                rep["files"][lk.file] = rep["files"].get(lk.file, 0) + 1
-                if gm.tier != "symbol":
-                    rep["weaker_tier"].append(f"{symbol} -> {gm.gene_symbol} ({gm.tier})")
+            it["concept_mapping_provenance"] = "unmapped"
+            it["alignment_method"] = "unmapped"
+    rep = {"mapped": {}, "unmapped": {}, "genes": {"rows": 0, "linked": 0, "files": {}, "not_linked": [],
+                                                    "weaker_tier": []}}
+    etype = {e["mention_id"]: e for e in entities}
+    for r in rows:
+        mid = r.get("mention_id")
+        if mid in skip or mid not in etype:
+            continue
+        typ = r.get("entity_type") or etype[mid].get("entity_type")
+        ok = r.get("concept_mapping_provenance") == "tool" and bool(r.get("ontology_id"))
+        rep["mapped" if ok else "unmapped"][typ] = rep["mapped" if ok else "unmapped"].get(typ, 0) + 1
+        if typ == "gene":
+            g = rep["genes"]
+            g["rows"] += 1
+            if ok:
+                g["linked"] += 1
+                src = (r.get("mapping_source") or "").removeprefix("trusted:")
+                g["files"][src] = g["files"].get(src, 0) + 1
+                if r.get("match_tier") != "exactMatch":
+                    g["weaker_tier"].append(f"{r.get('query')} -> {r.get('ontology_label')} ({r.get('notes')})")
             else:
-                rep["unresolved"].append(f"{symbol}: {gm.reason}")
-        links[r["mention_id"]] = gm
-    return links, rep
+                g["not_linked"].append(f"{r.get('query')}: {r.get('notes')}")
+    return rep
 
 
 def convert(out_dir: Path, text_path: Path, *, source: Optional[Path] = None, out: Optional[Path] = None,
@@ -420,7 +370,12 @@ def convert(out_dir: Path, text_path: Path, *, source: Optional[Path] = None, ou
     result, plan, report = build_result(data, text, source=source, expand_all=expand_all)
     ait_edged = frozenset(m["mention_id"] for m in ait_tables.current_mappings(data["mappings.csv"])
                           if m.get("ait_node_id") and m.get("skos_relation") not in ("", "none"))
-    report["concept_mapping"] = concept_map(result, text, ait_edged)
+    rows, ran = concept_rows(out_dir, data)
+    report["concept_mapping"] = apply_concepts(result, rows, data["entities.csv"], ait_edged)
+    report["concept_mapping"]["ran_map_stage"] = ran
+    from scripts import concept_mapping as cm
+    report["concept_mapping"]["missing_files"] = [
+        s.spec["file"] for s in cm.TrustedMapper(cm.load_config()).lexicon.missing_files()]
     paper_id = (data.get("paper.csv") or [{}])[0].get("paper_id") or out_dir.name
     stem = re.sub(r"[^\w.-]+", "_", paper_id)
     work = out_dir / ".structsense"
@@ -434,10 +389,8 @@ def convert(out_dir: Path, text_path: Path, *, source: Optional[Path] = None, ou
     AitTurtleBuilder.ait_edges = edges
     AitTurtleBuilder.ait_cards = {(c["mention_id"], c["ait_node_id"]): c for c in data.get("entity_cards.csv") or []}
     AitTurtleBuilder.ait_nodes_by_tax = {}
-    AitTurtleBuilder.gene_links, gene_report = link_genes(
-        [r for r in data["entities.csv"] if r["entity_type"] == "gene" and not ait_tables.is_quarantined(r)],
-        paper_species(data["entities.csv"]))
-    report["genes"] = gene_report
+    AitTurtleBuilder.concept_notes = {r["mention_id"]: r.get("notes", "") for r in rows
+                                      if r.get("notes") and r["mention_id"] not in ait_edged}
     for m in data["mappings.csv"]:
         if m.get("ait_node_id") and m["ait_id"] not in AitTurtleBuilder.ait_nodes_by_tax:
             AitTurtleBuilder.ait_nodes_by_tax[m["ait_id"]] = ait_nodes.load(m["ait_id"])
@@ -478,25 +431,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     c = rep["counts"]
     print(f"wrote {rep['ttl']}: {rep['triples']} triples, {c.get('entities', 0)} entities, "
           f"{c.get('mentions', 0)} mentions, {c.get('ait_edges', 0)} AIT edges, "
-          f"{c.get('gene_links', 0)} gene links, {rep['expresses_edges']} expresses edges")
+          f"{rep['expresses_edges']} expresses edges")
     cmr = rep.get("concept_mapping") or {}
-    if cmr.get("error"):
-        print(f"  concept mapping (trusted ontologies): {cmr['error']}")
-    else:
-        mapped = ", ".join(f"{k} {v}" for k, v in sorted(cmr.get("mapped", {}).items())) or "none"
-        unmapped = ", ".join(f"{k} {v}" for k, v in sorted(cmr.get("unmapped", {}).items())) or "none"
-        print(f"  concept mapping (trusted ontologies): mapped {mapped}; unmapped {unmapped}")
-        if cmr.get("missing_files"):
-            print(f"  trusted files listed in priority.md but missing: {', '.join(cmr['missing_files'])}")
-    g = rep.get("genes") or {}
+    if cmr.get("ran_map_stage"):
+        print("  concept_mappings.csv was missing: ran the concept map stage (trusted files only) and wrote it")
+    mapped = ", ".join(f"{k} {v}" for k, v in sorted(cmr.get("mapped", {}).items())) or "none"
+    unmapped = ", ".join(f"{k} {v}" for k, v in sorted(cmr.get("unmapped", {}).items())) or "none"
+    print(f"  concept mapping (concept_mappings.csv; AIT-edged cell types excluded): mapped {mapped}; "
+          f"unmapped {unmapped}")
+    if cmr.get("missing_files"):
+        print(f"  trusted files listed in priority.md but missing: {', '.join(cmr['missing_files'])}")
+    g = cmr.get("genes") or {}
     if g.get("rows"):
         files = ", ".join(f"{f} ({n})" for f, n in sorted(g["files"].items())) or "none"
         print(f"  genes linked: {g['linked']}/{g['rows']} (annotation: {files})")
-    for w in g.get("species_from_paper", []):
-        print(f"  gene with no species, linked in the paper's experimental species: {w}")
     for w in g.get("weaker_tier", []):
         print(f"  gene linked by a weaker tier (review): {w}")
-    for w in g.get("unresolved", []) + g.get("no_annotation", []):
+    for w in g.get("not_linked", []):
         print(f"  gene not linked: {w}")
     for w in rep["markers_not_written"]:
         print(f"  marker not written: {w}")

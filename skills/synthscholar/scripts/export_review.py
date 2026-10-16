@@ -34,6 +34,12 @@ Formats:
     per-group  per-group synthesis + Q&A
     narrative  condensed narrative summary (md + json)
 
+``charting``, ``appraisal``, ``per-group`` and ``narrative`` are the sibling
+exports the manuscript (``assemble_manuscript.py``) links to under
+``appendix_policy: sibling``. Export them into the same outdir as the review,
+not as optional extras: the manuscript's gate reports a pointer whose file is
+missing. ``--check`` also reports the manuscript template's gates.
+
 ``protocol.research_questions`` and every study's charted answer are organised
 question-first into md / json / ttl / jsonld — an appendix, a
 ``research_questions`` block, and ``slr:ResearchQuestion`` nodes. The exporters
@@ -192,6 +198,33 @@ def write_exports(result, outdir: str | Path, formats: list[str], base: str = "r
         if index:
             rq.merge_into_files(written, index, base=base)
     return written
+
+
+def template_check(review_path: Path, page_limit: int | None, template: str) -> int:
+    """The manuscript template's gates (references/review_template.md).
+
+    Failures block only once ``<stem>.manuscript.json`` exists: before that the
+    gates are the list of what still has to be written, not an error.
+    """
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import assemble_manuscript as am
+
+    g = am.template_gates(review_path, page_limit)
+    print(f"\nManuscript template ({template}): ~{g['body_words']} words of body prose "
+          f"(target {g['word_target']}), ~{g['estimated_pages']:.0f} of {g['page_limit']} pages")
+    if not g["authored"]:
+        print(f"  (no {review_path.stem}.manuscript.json yet: these gates are what to write, not failures)")
+    fails = 0
+    for gate in g["gates"]:
+        blocking = gate["level"] == "fail" and g["authored"]
+        fails += blocking
+        print(f"  {'FAIL' if blocking else 'WARN'}  [{gate['code']}] {gate['message']}")
+    if fails:
+        print(f"\n✗ {fails} template gate(s) fail — assemble_manuscript.py --check shows the same list.")
+        return 1
+    return 0
 
 
 def check(result) -> int:
@@ -522,6 +555,10 @@ def main() -> int:
                     help="validate + report completeness, write nothing")
     ap.add_argument("--print-template", action="store_true",
                     help="print a schema-valid example review JSON and exit")
+    ap.add_argument("--page-limit", type=int, default=None,
+                    help="override the manuscript page limit for the template gates (default 50)")
+    ap.add_argument("--template", metavar="PATH", default="references/review_template.md",
+                    help="manuscript section plan the gates follow (reported with --check)")
     ap.add_argument("--rq-themes", metavar="PATH",
                     help='JSON map {"RQ1": "Participants", …} relabelling the '
                          "research-question sections, by id or major group")
@@ -541,7 +578,8 @@ def main() -> int:
 
     result = load_result(args.review)
     if args.check:
-        return check(result)
+        rc = check(result)
+        return template_check(Path(args.review), args.page_limit, args.template) or rc
 
     themes = None
     if args.rq_themes:
