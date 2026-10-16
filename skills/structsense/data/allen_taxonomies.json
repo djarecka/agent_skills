@@ -6,7 +6,8 @@
     "ait_ids are the Allen Institute Taxonomy numbers shown on each taxonomy's brain-map.org page; ait_ids_by_species gives the per-species number for multi-species taxonomies.",
     "regions holds anatomical terms only; scripts/ait_taxonomy.py matches them against a paper's regions.",
     "Not re-confirmed against brain-map.org on the snapshot date: the Comparative LGN CCN (null), the Whole Mouse Brain Consensus publication line, and the mapmycells flags other than those of the Whole Mouse Brain Consensus and Cross-Species Basal Ganglia taxonomies.",
-    "trusted_files names, per species, the parsed taxonomy in trusted_ontologes/ (instances of trusted_model, the BICAN Cell Taxonomy model) that scripts/ait_nodes.py reads nodes and marker genes from. A taxonomy without trusted_files has no local node data. gene_annotation_files names, per species, the genome annotation (bkbit gff2jsonld) in trusted_ontologes/ whose GeneAnnotation IRIs the taxonomy's curated_markers link to; ait_nodes.py reads marker symbols from it."
+    "trusted_files names, per species, the parsed taxonomy in trusted_ontologes/ (instances of trusted_model, the BICAN Cell Taxonomy model) that scripts/ait_nodes.py reads nodes and marker genes from. A taxonomy without trusted_files has no local node data. gene_annotation_files names, per species, the genome annotation (bkbit gff2jsonld) in trusted_ontologes/ whose GeneAnnotation IRIs the taxonomy's curated_markers link to; ait_nodes.py reads marker symbols from it.",
+    "gene_annotations maps an NCBI taxon id to the trusted genome annotation (bkbit gff2jsonld, in trusted_ontologes/) a paper's genes of that species are linked to, with common and scientific names as a fallback key; ait_ttl.py uses it. It is independent of the taxonomy chosen (mouse has one though no mouse taxonomy has trusted files)."
   ],
   "taxonomies": [
     {
@@ -214,5 +215,39 @@
       "mapmycells": false
     }
   ],
-  "trusted_model": "cell_taxonomy.ttl"
+  "trusted_model": "cell_taxonomy.ttl",
+  "gene_annotations": {
+    "9606": {
+      "file": "annotation-ENSEMBL-9606-109.ttl",
+      "names": [
+        "human",
+        "homo sapiens"
+      ]
+    },
+    "9544": {
+      "file": "annotation-NCBI-9544-103.ttl",
+      "names": [
+        "macaque",
+        "rhesus macaque",
+        "rhesus monkey",
+        "macaca mulatta"
+      ]
+    },
+    "9483": {
+      "file": "annotation-NCBI-9483-105.ttl",
+      "names": [
+        "marmoset",
+        "common marmoset",
+        "callithrix jacchus"
+      ]
+    },
+    "10090": {
+      "file": "annotation-ENSEMBL-10090-109.ttl",
+      "names": [
+        "mouse",
+        "house mouse",
+        "mus musculus"
+      ]
+    }
+  }
 }

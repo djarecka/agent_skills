@@ -66,6 +66,17 @@ def fixture_tables() -> dict:
          "evidence_section": "Discussion", "evidence_chunk_id": "c9",
          "evidence_char_start": "0", "evidence_char_end": "10",
          "extraction_flag": "uncertain", "field_provenance": prov, "extractor_version": "v2", "run_id": "r1"},
+    ] + [
+        # every marker gene is its own gene entity (ait_tables validate requires it)
+        {"paper_id": PAPER, "mention_id": f"{PAPER}:M00{i}", "entity_type": "gene",
+         "label_verbatim": g, "label_normalized": g, "n_mentions": "1",
+         "species": "mouse", "species_role": "experimental", "ncbi_taxon_id": "10090",
+         "assertion_type": "asserted",
+         "evidence_sentence": "These cells co-expressed Sst, Chodl and Nos1.",
+         "evidence_section": "Results", "evidence_chunk_id": "c1",
+         "evidence_char_start": str(s1), "evidence_char_end": str(e1),
+         "extraction_flag": "ok", "field_provenance": prov, "extractor_version": "v2", "run_id": "r1"}
+        for i, g in ((3, "Sst"), (4, "Chodl"), (5, "Nos1"))
     ]
     methods = [{"paper_id": PAPER, "assay_id": "A1", "assay_name": "MERFISH", "platform": "MERFISH",
                 "modality": "spatial", "targeted": "true", "gene_panel_name": "panel300",
@@ -203,6 +214,33 @@ class TrustedTaxonomyNodes(unittest.TestCase):
             t = ait_nodes.load(ait_id)
             g = ait_nodes._parse(str(ait_nodes.trusted_dir() / t.file))
             self.assertEqual({f"annotation-{v}.ttl" for v in g.objects(None, gav)}, {t.gene_file}, ait_id)
+
+    def test_every_extracted_gene_links_to_an_ensembl_or_ncbi_annotation(self):
+        from scripts import ait_ttl
+        row = lambda mid, sym, sp="", tx="": {"mention_id": mid, "entity_type": "gene", "label_verbatim": sym,
+                                              "label_normalized": sym, "species": sp, "ncbi_taxon_id": tx}
+        rows = [row("M1", "DRD1", "human", "9606"),          # ENSEMBL human
+                row("M2", "DRD1", "", "9606"),                # taxon id only
+                row("M3", "DRD1", "Homo sapiens"),             # scientific name
+                row("M4", "DRD1"),                             # no species: the paper's experimental one
+                row("M5", "TH", "rhesus macaque"),             # NCBI macaque
+                row("M6", "TH", "", "9483"),                   # NCBI marmoset
+                row("M7", "Drd1", "mouse"),                    # ENSEMBL mouse, mouse-style symbol
+                row("M8", "Drd1", "rat", "10116"),             # no trusted annotation
+                row("M9", "NOTAGENE1", "human")]               # not in the annotation
+        links, rep = ait_ttl.link_genes(rows, ("human", "9606"))
+        human = links["M1"].iri
+        self.assertTrue(human.startswith("urn:bkbit:"))
+        self.assertEqual({links[m].iri for m in ("M2", "M3", "M4")}, {human})
+        self.assertEqual(rep["species_from_paper"], ["DRD1"])
+        self.assertEqual(links["M5"].file, "annotation-NCBI-9544-103.ttl")
+        self.assertEqual(links["M6"].file, "annotation-NCBI-9483-105.ttl")
+        self.assertEqual((links["M7"].file, links["M7"].tier), ("annotation-ENSEMBL-10090-109.ttl", "symbol"))
+        self.assertTrue(links["M5"].iri and links["M6"].iri and links["M7"].iri)
+        self.assertEqual(len({links[m].iri for m in ("M1", "M5", "M6", "M7")}), 4)  # one gene per species
+        self.assertEqual(rep["linked"], 7)
+        self.assertIn("no trusted gene annotation", links["M8"].reason)
+        self.assertEqual(rep["unresolved"], ["NOTAGENE1: no gene with this symbol or synonym"])
 
     def test_search_and_validate_node(self):
         from scripts import ait_nodes
@@ -347,6 +385,13 @@ class TablesContract(unittest.TestCase):
                 tables.write_table(out / name, name, rows)
             return [i.message for i in tables.validate(out) if i.level == "error"]
 
+    def test_marker_gene_without_a_gene_row_is_an_error(self):
+        def mutate(d):
+            d["entities.csv"] = [r for r in d["entities.csv"] if r["label_verbatim"] != "Nos1"]
+        errs = [m for m in self._validate_with(mutate) if "no entity_type=gene row" in m]
+        self.assertEqual(len(errs), 1)
+        self.assertIn("Nos1", errs[0])
+
     def test_wrong_match_confidence_is_an_error(self):
         def mutate(d):
             d["mappings.csv"][0]["match_confidence"] = "exact"
@@ -408,6 +453,30 @@ class GeneDiff(unittest.TestCase):
         d = gd.gene_diff(["Sst"], ["Sst"], panel=[])
         self.assertTrue(d["panel_limited"])
         self.assertEqual(d["jaccard_panel_restricted"], "NA")
+
+    def test_no_paper_markers_is_na_not_zero(self):
+        # the HMBA case: the taxonomy node has curated markers, the paper names none
+        d = gd.gene_diff([], ["STXBP6"])
+        self.assertIsNone(d["jaccard"])  # NA: no evidence either way, not disagreement
+        self.assertEqual(d["genes_taxonomy_only"], ["STXBP6"])
+        d = gd.gene_diff([], ["STXBP6"], panel=["STXBP6"])
+        self.assertEqual(d["jaccard_panel_restricted"], "NA")
+        self.assertEqual(gd.gene_diff(["DRD1"], ["STXBP6"])["jaccard"], 0.0)  # a real disagreement stays 0
+
+    def test_marker_report_counts_from_the_cards(self):
+        cards = [
+            {"ait_node_id": "G1", "ait_cell_type_label": "STRd D1 Matrix MSN", "n_shared": "0",
+             "n_paper_only": "0", "jaccard": "NA"},
+            {"ait_node_id": "S1", "ait_cell_type_label": "STR D1 MSN", "n_shared": "0",
+             "n_paper_only": "2", "jaccard": "0.0"},
+            {"ait_node_id": "G2", "ait_cell_type_label": "STRv D1 MSN", "n_shared": "1",
+             "n_paper_only": "0", "jaccard": "0.5"},
+        ]
+        rep = gd.marker_report(cards, {"G1": ["STXBP6"], "G2": ["ARHGAP6", "DRD1"], "S1": []})
+        self.assertEqual([n["ait_node_id"] for n in rep["nodes_with_taxonomy_markers"]], ["G1", "G2"])
+        self.assertEqual(rep["nodes_without_taxonomy_markers"], 1)
+        self.assertEqual((rep["edges_where_paper_names_markers"], rep["edges_with_shared_markers"],
+                          rep["edges_jaccard_na"]), (2, 1, 1))
 
     def test_case_is_not_folded(self):
         d = gd.gene_diff(["PVALB"], ["Pvalb"])

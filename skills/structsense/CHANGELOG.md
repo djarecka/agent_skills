@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.13.0 — AIT mapping always writes validated Turtle
+
+- **`scripts/ait_ttl.py`** (new): AIT mapping tables → `<paper_id>.ttl`, the graph
+  deliverable of the AIT mode, now a mandatory last step (prompt pass 5, SKILL.md).
+  Refuses tables that fail `ait_tables validate`; builds a working NER result +
+  kg_plan (`out/.structsense/`), converts it with the shared `json_to_ttl` builder
+  (`AitTurtleBuilder` overrides `emit_mapping` to write every `mappings.csv` edge with
+  its SKOS relation, basis, evidence, notes and marker diff), and gates it with
+  `validate_ttl` (a failing file becomes `.invalid.ttl`). Marker genes become
+  `expresses` edges only where a sentence names both.
+- **`json_to_ttl.result_to_ttl(builder_cls=…)`**: a mode can subclass `TurtleBuilder`.
+- **Fix — identity keys were rewritten by `rejoin_wrapped`**: an asserted
+  `identity_key` (`str_d2_msn`) became `str_d2msn` when one alias of the entity was
+  written `D2MSN`, splitting one entity into two nodes. An asserted identity key is
+  now kept as given (test: `test_identity_key_is_not_rejoined_by_an_alias`).
+- **`expand_mentions`**: U+2212 (minus sign) matches a hyphen — PDF figure text
+  writes `CN LAMP5−LHX6 GABA`.
+- **Prefix `BKBIT`** (`urn:bkbit:{id}`) in `ttl_config.json` `curie_expansions`, and
+  `OntologyConceptShape` accepts RFC 8141 URNs as `conceptIRI`: the Allen/BICAN
+  taxonomy nodes have no other identity, and inventing an http IRI for them would mint
+  identifiers the taxonomy does not have.
+- **Genes are linked to `GeneAnnotation`.** Before, every gene entity of an AIT run
+  got a placeholder `BRAINKB:` concept. `ait_ttl` now resolves each gene row to its
+  `GeneAnnotation` IRI in the species' trusted genome annotation
+  (`ait_nodes.GeneLookup`; new catalog key `gene_annotations`: human, macaque,
+  marmoset, mouse), by exact symbol (`skos:exactMatch`), else the same symbol in
+  another case or a synonym (`skos:closeMatch`, flagged), and only when exactly one
+  gene matches. Unlinked genes get a gap comment and are listed by `ait_ttl`.
+  `ait_nodes genes <species> <symbol>…` does the same lookup from the command line.
+- **AIT runs concept-map every entity against the trusted ontologies.** The flow is
+  extraction → concept mapping (trusted files only) → Turtle. `ait_ttl` now runs
+  `concept_mapping` with the trusted source on species, brain regions and cell types
+  without an AIT edge (before, none were mapped), querying each row's
+  `label_normalized` rather than a mention surface (a preprint surface such as
+  `subthalamic 139 nucleus` carries margin line numbers). Genes keep their own trusted
+  source, the genome annotation; AIT cell types their `mappings.csv` edge. The lexicon
+  is built on first use. On the test paper: species 5/5, brain regions 10/18 (the rest
+  need `uberon.owl`, which `priority.md` lists but the directory does not hold).
+- **Every gene row is linked.** `gene_annotations` is keyed by NCBI taxon id (common and
+  scientific names as fallback); a gene row with no species takes the paper's one
+  experimental species; `ait_tables validate` fails when a cell type's marker gene has no
+  gene row of its own; `ait_ttl` prints `genes linked: N/M`.
+- **Jaccard is `NA` when the paper names no marker** for the entity (and so is
+  `jaccard_panel_restricted`). An empty paper side against a taxonomy node's curated
+  markers gave 0, which reads as disagreement and sorts the edge to the bottom of the
+  review queue; a paper marker that the node lacks still gives a real 0.
+- **`marker_report.json`** (written by `ait_gene_diff`): mapped nodes, which carry
+  taxonomy markers and which markers, edges where the paper names markers, edges with
+  shared markers, edges whose Jaccard is `NA`. `run_report.md` quotes it instead of
+  summarising marker availability — a run had written "the human BG file has no
+  curated_markers for the mapped nodes" while 8 of its mapped Group nodes have them.
+- **Fix — identifiers in labels were cut.** Mapping decisions and candidates were
+  labelled with their concept's CURIE, and `label()` cuts names over 60 characters,
+  so an AIT node's `BKBIT:<64 hex>` became `BKBIT:0453…`. A node that stands for an
+  identifier is now named by the CURIE when it fits, else by the concept's preferred
+  label (`STR D1 MSN`); the full identifier stays on the concept
+  (`ner:conceptIdentifier` / `ner:conceptIRI`).
+- Tests: `scripts/tests/test_ait_ttl.py` (tables → validated TTL end to end against
+  `Human_BG.ttl`, now also the gene link and that no label is a cut identifier; the
+  identity-key regression; `id_name`). `cqs/test_cqs.py` CQ58 fails before
+  and after this change (unbound `?mapping` in the query) — not addressed here.
+
 ## Unreleased — AIT mapping reads nodes from the trusted taxonomy files
 
 - **`scripts/ait_nodes.py`** (new): the AIT taxonomy reader the AIT mapping prompt

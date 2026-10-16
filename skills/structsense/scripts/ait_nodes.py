@@ -34,10 +34,17 @@ species' genome annotation in `trusted_ontologes/` — the catalog's
 for. A marker IRI the annotation file does not hold is listed in
 `Taxonomy.unresolved_markers`, never guessed.
 
+A paper's genes are linked the other way round: `GeneLookup` resolves a symbol to the
+`GeneAnnotation` IRI in the species' trusted annotation (catalog `gene_annotations`,
+NCBI taxon id or species name -> file), by exact symbol, then the same symbol in another case, then synonym,
+and only when exactly one gene matches. `scripts/ait_ttl.py` uses it for every gene
+entity of an AIT run.
+
     python -m scripts.ait_nodes info AIT19.5
     python -m scripts.ait_nodes search AIT19.5 --label "D1 MSN" --gene DRD1 --region putamen
     python -m scripts.ait_nodes show AIT19.5 CS20250428_GROUP_0033
     python -m scripts.ait_nodes markers AIT19.5 CS20250428_GROUP_0033 --out markers.json
+    python -m scripts.ait_nodes genes human DRD1 TAC1     # GeneAnnotation IRIs (catalog gene_annotations)
 
 Needs rdflib (requirements.txt).
 """
@@ -176,6 +183,86 @@ def _gene_symbols(path: str) -> Dict[str, str]:
     sym = URIRef("https://w3id.org/biolink/vocab/symbol")
     return {str(s): str(g.value(s, sym)) for s in g.subjects(RDF.type, URIRef(BICAN + "GeneAnnotation"))
             if g.value(s, sym) is not None}
+
+
+@dataclass
+class GeneMatch:
+    symbol: str  # as asked
+    iri: str = ""  # GeneAnnotation IRI, empty when unresolved
+    gene_symbol: str = ""  # the annotation's own biolink:symbol
+    tier: str = ""  # symbol | symbol_case | synonym
+    reason: str = ""  # why unresolved
+    file: str = ""
+
+
+class GeneLookup:
+    """Symbol -> GeneAnnotation in one species' genome annotation (gff2jsonld output).
+
+    Tiers, strongest first: `symbol` (exact), `symbol_case` (same symbol in another
+    case, e.g. mouse-style `Pou6f2` for POU6F2), `synonym` (exact). A tier must name
+    exactly one gene; an ambiguous tier is reported, never broken by picking one. The
+    same rule bkbit's ait2jsonld uses for curated_markers.
+    """
+
+    def __init__(self, file: str):
+        from rdflib import RDF, URIRef
+        self.file = file
+        g = _parse(str(trusted_dir() / file))
+        bl = "https://w3id.org/biolink/vocab/"
+        sym, syn = URIRef(bl + "symbol"), URIRef(bl + "synonym")
+        self.symbol_of: Dict[str, str] = {}
+        self.by_symbol: Dict[str, set] = {}
+        self.by_folded: Dict[str, set] = {}
+        self.by_synonym: Dict[str, set] = {}
+        for s in g.subjects(RDF.type, URIRef(BICAN + "GeneAnnotation")):
+            iri = str(s)
+            for o in g.objects(s, sym):
+                self.symbol_of.setdefault(iri, str(o))
+                self.by_symbol.setdefault(str(o), set()).add(iri)
+                self.by_folded.setdefault(str(o).casefold(), set()).add(iri)
+            for o in g.objects(s, syn):
+                self.by_synonym.setdefault(str(o), set()).add(iri)
+
+    def resolve(self, symbol: str) -> GeneMatch:
+        s = symbol.strip()
+        for tier, ids in (("symbol", self.by_symbol.get(s)), ("symbol_case", self.by_folded.get(s.casefold())),
+                          ("synonym", self.by_synonym.get(s))):
+            if not ids:
+                continue
+            if len(ids) > 1:
+                return GeneMatch(symbol, reason=f"ambiguous: {len(ids)} genes match by {tier}", file=self.file)
+            iri = next(iter(ids))
+            return GeneMatch(symbol, iri, self.symbol_of.get(iri, ""), tier, file=self.file)
+        return GeneMatch(symbol, reason="no gene with this symbol or synonym", file=self.file)
+
+
+def gene_annotation_file(species: str = "", ncbi_taxon: str = "", catalog: Optional[Path] = None) -> str:
+    """The trusted genome annotation for a species, or ''.
+
+    Catalog `gene_annotations` is keyed by NCBI taxon id (`9606`); `ncbi_taxon` wins,
+    then `species` is matched against each entry's common and scientific names
+    (case-insensitive), so "human", "Homo sapiens" and 9606 all find the human file."""
+    entries = ait_taxonomy.load_catalog(catalog).get("gene_annotations") or {}
+    tx = re.sub(r"\D", "", str(ncbi_taxon or ""))
+    if tx and tx in entries:
+        return entries[tx]["file"]
+    name = " ".join((species or "").lower().split())
+    for e in entries.values():
+        if name and name in e.get("names", []):
+            return e["file"]
+    return ""
+
+
+@lru_cache(maxsize=None)
+def gene_lookup(species: str = "", ncbi_taxon: str = "") -> Optional[GeneLookup]:
+    """GeneLookup for a species (name or NCBI taxon id), or None when no trusted annotation covers it."""
+    f = gene_annotation_file(species, ncbi_taxon)
+    return _lookup_for_file(f) if f else None
+
+
+@lru_cache(maxsize=None)
+def _lookup_for_file(f: str) -> GeneLookup:
+    return GeneLookup(f)
 
 
 def load(identifier: str, species: Optional[str] = None, *, catalog: Optional[Path] = None,
@@ -336,7 +423,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     m.add_argument("node_id", nargs="+")
     m.add_argument("--own-only", action="store_true", help="do not add ancestors' label genes")
     m.add_argument("--out", help="write JSON here (default stdout)")
+    gn = sub.add_parser("genes", help="GeneAnnotation IRIs for gene symbols, in a species' trusted annotation")
+    gn.add_argument("species", help="a name (human, Homo sapiens, macaque, ...) or an NCBI taxon id (9606)")
+    gn.add_argument("symbol", nargs="+")
     args = ap.parse_args(argv)
+
+    if args.cmd == "genes":
+        sp = args.species
+        lk = gene_lookup("", sp) if sp.isdigit() else gene_lookup(sp)
+        if lk is None:
+            print(f"error: no trusted gene annotation for species {args.species!r} (catalog gene_annotations)")
+            return 1
+        print(json.dumps([asdict(lk.resolve(s)) for s in args.symbol], indent=2))
+        return 0
 
     try:
         tax = load(args.taxonomy, args.species)

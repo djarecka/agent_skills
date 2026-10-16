@@ -30,6 +30,25 @@ the taxonomy happens to contain.
 2. **Verify** — lexical evidence check, deduplication, provenance labelling.
 3. **Map** to AIT taxonomies with SKOS match relations.
 4. **Assemble entity cards**, including the marker-gene diff.
+5. **Concept-map and write the Turtle** — always: `python -m scripts.ait_ttl` maps every
+   extracted entity against the files in `trusted_ontologes/` (code, never memory), then
+   turns the validated tables into `<paper_id>.ttl` and gates it. A run that stops at the
+   CSVs is unfinished.
+
+The flow is **extraction, then concept mapping against the trusted ontologies**. You
+extract into the tables (Passes 1–4); the mapping of every entity to an ontology term is
+done by code from the trusted files, by entity type:
+
+| Entity | Trusted source | How |
+|---|---|---|
+| cell type with an AIT edge | the taxonomy file (`Human_BG.ttl`, …) | your `mappings.csv` edge, node ids from `ait_nodes` |
+| gene | the species' genome annotation (`annotation-ENSEMBL-9606-109.ttl`, `annotation-NCBI-9544-103.ttl`, …; catalog `gene_annotations`) | `ait_ttl`, by symbol |
+| species, brain region, cell type without an AIT edge | the ontologies of `trusted_ontologes/priority.md` (NCBITaxon, UBERON via CL, CL, …) | `ait_ttl` runs `concept_mapping` with the trusted source only, on each row's `label_normalized` |
+
+So give every row a clean `label_normalized` (the name, not the surface: `subthalamic
+nucleus`, not `subthalamic 139 nucleus`; `striatum`, not `striatal`), give gene rows their
+species and `ncbi_taxon_id`, and extract every marker gene as its own gene row
+(`ait_tables validate` fails otherwise). Never write an ontology IRI yourself.
 
 ---
 
@@ -358,7 +377,8 @@ comparing, and record which namespace was used. Then emit, per entity, three set
 | Taxonomy-only | `genes_taxonomy_only` | AIT markers the paper never mentions — expected to be large and is not evidence against the mapping |
 
 Also report `n_shared`, `n_paper_only`, `n_taxonomy_only`, and `jaccard` (computed on the
-resolved sets). Interpret these against the assay: a 300-gene MERFISH panel cannot
+resolved sets). `jaccard` is `NA` when the paper names no marker for the entity: an empty
+paper side is no evidence either way, not a disagreement. Interpret these against the assay: a 300-gene MERFISH panel cannot
 mention markers that are not in the panel, so weight `genes_taxonomy_only` by whether
 each gene was measurable at all. Set `panel_limited = true` when the assay was targeted,
 and compute `jaccard_panel_restricted` over the panel intersection as well.
@@ -380,7 +400,8 @@ python -m scripts.ait_gene_diff out/ --markers markers.json --panels panels.json
 
 ## Standardized output
 
-Emit exactly these seven files, with exactly these column names, in this order. Column
+Emit exactly these seven tables, with exactly these column names, in this order, then
+`run_report.md` and the Turtle (`<paper_id>.ttl`, below). Column
 names are a contract — do not rename, reorder, add, or drop columns; a field with no
 value is left empty, not omitted. The machine-readable contract is
 `schemas/ait-mapping-columns.json` (type, multi-valued flag, vocabulary and required
@@ -393,6 +414,7 @@ python -m scripts.ait_tables derive out/          # match_confidence + crosswalk
 python -m scripts.ait_gene_diff out/ --markers markers.json --namespace MGI
 python -m scripts.ait_tables review-sheet out/    # the deterministic join
 python -m scripts.ait_tables validate out/        # must exit 0 before anything reaches the knowledge graph
+python -m scripts.ait_ttl out/ --text paper.txt --source paper.pdf   # ALWAYS: writes out/<paper_id>.ttl, must print VALID
 ```
 
 Use UTF-8, comma-separated, quote all fields, `\n` line endings. Empty means not applicable; `NA`
@@ -491,11 +513,48 @@ species, and regions:
 ### `run_report.md`
 
 Counts per table; entities extracted, verified, quarantined (from `evidence_report.json`);
+the marker comparison **as `marker_report.json` states it** (mapped nodes, which of them
+carry taxonomy markers and which markers, edges where the paper names markers, edges with
+shared markers, edges whose Jaccard is `NA`) — quote those numbers, never summarise
+marker availability in your own words;
 mappings by SKOS relation; edges whose best evidence is only `fuzzy`; unmapped entities
 with reasons; sources attempted vs retrieved; the `allen_taxonomies.json` snapshot date
-used; the trusted taxonomy file(s) nodes and markers were read from; the `validate` result; and every assumption you made that a curator should check.
+used; the trusted taxonomy file(s) nodes and markers were read from; the `validate` result; the Turtle file, its triple / entity / mention / AIT-edge / gene-link counts, the genes not linked, and its `validate_ttl` result (from `ait_ttl`); and every assumption you made that a curator should check.
 
 ---
+
+
+### `<paper_id>.ttl` — the graph deliverable (always)
+
+The tables are the review surface; the knowledge graph ingests Turtle. Every AIT run
+ends with
+
+```bash
+python -m scripts.ait_ttl out/ --text paper.txt --source paper.pdf
+```
+
+which refuses tables that do not pass `ait_tables validate`, writes
+`out/<paper_id>.ttl` as instances of the Named Entity Ontology (the same
+`json_to_ttl` builder as every NER run, so keys, UUIDv5 IRIs and provenance agree
+with a `cns-cells` run of the same paper), and gates it with `validate_ttl` (a
+failing file is renamed `.invalid.ttl` and is not a result). What it contains:
+
+| Table | Becomes |
+|---|---|
+| `paper.csv` | `ner:Publication` + document version |
+| `entities.csv` (not quarantined) | one `ner:NamedEntity` per row (`CellType`, `CellSubtype` for supertype/cluster/type, `Gene`, `Species`, `BrainRegion`), key = normalized label; mentions at exact offsets — inside the verified evidence spans, plus every other in-scope occurrence of a surface only that row uses |
+| `mappings.csv` | per edge: `ner:resolvedToConcept` + `skos:<relation>` to the AIT node's own IRI from the trusted file (`urn:bkbit:…`, prefix `BKBIT`), and a `ner:ConceptMappingDecision` with basis, `mapping_evidence`, `notes` and the Pass 4 marker diff; `none` → a gap comment with `no_match_reason` |
+| gene rows of `entities.csv` | `ner:resolvedToConcept` + `skos:exactMatch` to the gene's `GeneAnnotation` in the species' trusted genome annotation (`urn:bkbit:…`; catalog `gene_annotations`, e.g. human → `annotation-ENSEMBL-9606-109.ttl`), looked up by code (`ait_nodes.GeneLookup`). A match only by case or synonym is `skos:closeMatch`, flagged for review. An ambiguous or unknown symbol, or a species without a trusted annotation, gets a gap comment instead |
+| species, brain region and cell-type rows without an AIT edge | `ner:resolvedToConcept` + `skos:*Match` to the term the trusted ontologies give for the row's `label_normalized` (`concept_mapping`, trusted source only, `label_routing`: Species → NCBITaxon, BrainRegion → UBERON, CellType → CL > PCL). A term no trusted file has stays unmapped (internal `BRAINKB:` concept) and is counted as unmapped |
+| `marker_genes` | `expresses` (RO:0002292) to the gene entity, only where one sentence of the paper names both (that sentence is the evidence); others are listed as not written |
+
+Working files go to `out/.structsense/` (`<paper_id>_ait_final.json`,
+`_ait_kg_plan.json`, `_ait_ttl_report.json`). Genes are linked as above; species,
+regions and cell types without an AIT edge are mapped against the trusted ontologies
+(the lexicon is built on first use). In `run_report.md`, quote what
+`ait_ttl` prints: the concept-mapping counts per class (mapped / unmapped), any trusted
+files listed in `priority.md` but missing, the gene link count, and every gene not
+linked or linked by a weaker tier.
 
 ## Tools
 
@@ -510,7 +569,8 @@ used; the trusted taxonomy file(s) nodes and markers were read from; the `valida
   `trusted_ontologes/` (model: `cell_taxonomy.ttl`): look up candidate nodes by label,
   region, or markers, and retrieve the marker gene set needed for the Pass 4 diff.
 - **Deterministic stages** — `scripts/ait_evidence.py` (Pass 2a), `scripts/ait_tables.py`
-  (derive / review sheet / validate), `scripts/ait_gene_diff.py` (Pass 4). Run them; do
+  (derive / review sheet / validate), `scripts/ait_gene_diff.py` (Pass 4), `scripts/ait_ttl.py`
+  (the Turtle, always last). Run them; do
   not reproduce their output by hand.
 - **GFF / GeneOrthology tools** — normalize gene symbols and resolve cross-species
   orthologs before any gene-set comparison.
