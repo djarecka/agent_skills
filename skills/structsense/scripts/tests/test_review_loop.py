@@ -305,3 +305,33 @@ def test_ait_genes_map_to_the_species_annotation_and_remap_there(tmp_path):
     row2 = next(c for c in data[rl.CONCEPT_TABLE] if c["mention_id"] == "P1:M004")
     assert row2["ontology_label"] == "Pvalb" and row2["ontology_id"] != sst_iri
     assert row2["mapping_source"] == "trusted:annotation-ENSEMBL-10090-109"
+
+
+def test_ait_gene_not_in_the_annotation_continues_through_the_cascade(tmp_path):
+    """Annotation first; a gene it does not resolve goes through the cascade (label Gene,
+    routed to HGNC / NCBIGene), and the row says it does not join the taxonomy markers."""
+    pytest.importorskip("rdflib")
+    if not (SKILL / "trusted_ontologes" / "annotation-ENSEMBL-10090-109.ttl").is_file():
+        pytest.skip("needs the mouse genome annotation")
+
+    class GeneStub(StubMapper):
+        LEX = {**StubMapper.LEX, "fakegene1": ("http://identifiers.org/ncbigene/999999", "FAKEGENE1", "NCBIGene")}
+
+    out = ait_dir(tmp_path)
+    data = rl.load("ait", out)
+    base = data["entities.csv"][0]
+    data["entities.csv"] += [dict(base, mention_id="P1:M004", entity_type="gene", label_verbatim="Sst",
+                                  label_normalized="Sst", hierarchy_level=""),
+                             dict(base, mention_id="P1:M005", entity_type="gene", label_verbatim="FAKEGENE1",
+                                  label_normalized="FAKEGENE1", hierarchy_level=""),
+                             dict(base, mention_id="P1:M006", entity_type="gene", label_verbatim="NOTAGENE2",
+                                  label_normalized="NOTAGENE2", hierarchy_level="")]
+    stub = GeneStub()
+    rl.map_ait(data, rl.Tools(mapper=stub))
+    rows = {c["mention_id"]: c for c in data[rl.CONCEPT_TABLE]}
+    assert rows["P1:M004"]["mapping_source"] == "trusted:annotation-ENSEMBL-10090-109"
+    assert "sst" not in stub.calls  # resolved by the annotation: never sent to the cascade
+    assert rows["P1:M005"]["ontology_id"] == "http://identifiers.org/ncbigene/999999"
+    assert "does not join the taxonomy's curated_markers" in rows["P1:M005"]["notes"]
+    assert rows["P1:M006"]["concept_mapping_provenance"] == "unmapped"
+    assert "not in the genome annotation" in rows["P1:M006"]["notes"]

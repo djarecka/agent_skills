@@ -292,9 +292,12 @@ def _concept_row(e: dict, query: str, f: dict) -> dict:
 def map_ait(data: dict, tools: Tools) -> dict:
     """entities.csv -> concept_mappings.csv (one row per entity, mapped or not).
 
-    Genes go to their trusted genome annotation (the species' ENSEMBL/NCBI gff2jsonld
-    file in trusted_ontologes/, ait_nodes.resolve_gene_row), never to the general
-    mapper; every other entity goes through the ConceptMapper, trusted files first."""
+    Genes go first to their trusted genome annotation (the species' ENSEMBL/NCBI
+    gff2jsonld file in trusted_ontologes/, ait_nodes.resolve_gene_row): its
+    GeneAnnotation IRI is the one the taxonomy's curated_markers link to. A gene the
+    annotation does not resolve continues through the cascade like every other entity
+    (label Gene -> HGNC / NCBIGene), with a note that it does not join the markers.
+    Everything else goes through the ConceptMapper, trusted files first."""
     at = _ait()
     rows, probes, genes = [], [], []
     old = {c.get("mention_id"): c for c in data.get(CONCEPT_TABLE) or []}
@@ -324,8 +327,21 @@ def map_ait(data: dict, tools: Tools) -> dict:
     if genes:  # after species: a species mapped above has its ncbi_taxon_id now
         from scripts import ait_nodes
         default = ait_nodes.paper_species(data.get("entities.csv") or [])
+        fallback = []
         for e, q in genes:
-            rows.append(_concept_row(e, q, ait_nodes.gene_concept_fields(ait_nodes.resolve_gene_row(e, default))))
+            f = ait_nodes.gene_concept_fields(ait_nodes.resolve_gene_row(e, default))
+            if f["concept_mapping_provenance"] == "tool":
+                rows.append(_concept_row(e, q, f))
+            else:  # not in the annotation: the normal cascade, routed to HGNC / NCBIGene
+                fallback.append((e, q, f["notes"], {"term": q, "label": "Gene"}))
+        if fallback:
+            tools.mapper.map_items([p for *_, p in fallback], "term")
+        for e, q, why, p in fallback:
+            tool = p.get("concept_mapping_provenance") == "tool" and p.get("ontology_id")
+            note = (f"not in the genome annotation ({why}); mapped by the cascade, so it does not "
+                    "join the taxonomy's curated_markers") if tool else \
+                f"not in the genome annotation ({why}); cascade tried " + ",".join(p.get("mapping_sources_tried") or [])
+            rows.append(_concept_row(e, q, {**p, "notes": note}))
     data[CONCEPT_TABLE] = rows
     return data
 
@@ -589,7 +605,7 @@ class Applier:
             hit = ait_nodes.gene_concept_fields(
                 ait_nodes.resolve_gene_row(row, ait_nodes.paper_species(ents), symbol=query))
             if hit.get("concept_mapping_provenance") != "tool":
-                raise OpError(f"no GeneAnnotation for {query!r}: {hit.get('notes')}")
+                hit = self.tools.lookup(query, label)  # not in the annotation: the cascade
         else:
             hit = self.tools.lookup(query, label)
         if hit.get("concept_mapping_provenance") != "tool" or not hit.get("ontology_id"):

@@ -53,7 +53,7 @@ done by code from the files in `trusted_ontologes/`, by entity type:
 | Entity | Trusted source | Where it is recorded |
 |---|---|---|
 | cell type with an AIT edge | the taxonomy file (`Human_BG.ttl`, …) | your `mappings.csv` edge, node ids from `ait_nodes` |
-| gene | the species' genome annotation (`annotation-ENSEMBL-9606-109.ttl`, `annotation-NCBI-9544-103.ttl`, …; catalog `gene_annotations`), by symbol (`ait_nodes.GeneLookup`) | `concept_mappings.csv` (`review_loop map`) |
+| gene | first the species' genome annotation (`annotation-ENSEMBL-9606-109.ttl`, `annotation-NCBI-9544-103.ttl`, …; catalog `gene_annotations`), by symbol (`ait_nodes.GeneLookup`) — its `GeneAnnotation` IRI is the one the taxonomy's `curated_markers` link to; a gene it does not resolve continues through the cascade (HGNC / NCBIGene) and is flagged as not joining the markers | `concept_mappings.csv` (`review_loop map`) |
 | species, brain region, any cell type | the ontologies of `trusted_ontologes/priority.md` (NCBITaxon, UBERON via CL, CL, …), on the row's `label_normalized` | `concept_mappings.csv` (`review_loop map`) |
 
 So give every row a clean `label_normalized` (the name, not the surface: `subthalamic
@@ -425,7 +425,7 @@ python -m scripts.ait_tables derive out/          # match_confidence + crosswalk
 python -m scripts.ait_gene_diff out/ --markers markers.json --namespace MGI
 python -m scripts.ait_tables review-sheet out/    # the deterministic join
 python -m scripts.ait_tables validate out/        # must exit 0 before anything reaches the knowledge graph
-python -m scripts.review_loop map --mode ait out/ # concept_mappings.csv (trusted files first; genes: annotation)
+python -m scripts.review_loop map --mode ait out/ # concept_mappings.csv (trusted files first; genes: annotation first)
 # ... judge panel and optional human feedback (Pass 5), then validate again
 python -m scripts.ait_ttl out/ --text paper.txt --source paper.pdf   # ALWAYS: writes out/<paper_id>.ttl, must print VALID
 ```
@@ -559,15 +559,15 @@ failing file is renamed `.invalid.ttl` and is not a result). What it contains:
 | `paper.csv` | `ner:Publication` + document version |
 | `entities.csv` (not quarantined) | one `ner:NamedEntity` per row (`CellType`, `CellSubtype` for supertype/cluster/type, `Gene`, `Species`, `BrainRegion`), key = normalized label; mentions at exact offsets — inside the verified evidence spans, plus every other in-scope occurrence of a surface only that row uses |
 | `mappings.csv` | per edge: `ner:resolvedToConcept` + `skos:<relation>` to the AIT node's own IRI from the trusted file (`urn:bkbit:…`, prefix `BKBIT`), and a `ner:ConceptMappingDecision` with basis, `mapping_evidence`, `notes` and the Pass 4 marker diff; `none` → a gap comment with `no_match_reason` |
-| `concept_mappings.csv`, gene rows | `ner:resolvedToConcept` + `skos:exactMatch` to the gene's `GeneAnnotation` in the species' trusted genome annotation (`urn:bkbit:…`; catalog `gene_annotations`, e.g. human → `annotation-ENSEMBL-9606-109.ttl`). A match only by case or synonym is `skos:closeMatch`, flagged for review. An ambiguous or unknown symbol, or a species without a trusted annotation, is an unmapped row with the reason in `notes` |
+| `concept_mappings.csv`, gene rows | `ner:resolvedToConcept` + `skos:exactMatch` to the gene's `GeneAnnotation` in the species' trusted genome annotation (`urn:bkbit:…`; catalog `gene_annotations`, e.g. human → `annotation-ENSEMBL-9606-109.ttl`). A match only by case or synonym is `skos:closeMatch`, flagged for review. A gene the annotation does not resolve (an unknown symbol, or a species without a trusted annotation) is mapped by the cascade (HGNC / NCBIGene) when it can be, with a note that it does not join the taxonomy markers; otherwise it is an unmapped row with the reason in `notes` |
 | `concept_mappings.csv`, species / brain region / cell-type rows without an AIT edge | `ner:resolvedToConcept` + `skos:<match_tier>` to the row's `ontology_id` (trusted ontologies first: Species → NCBITaxon, BrainRegion → UBERON, CellType → CL > PCL). An unmapped row stays unmapped (internal `BRAINKB:` concept) and is counted as unmapped. A judge's or curator's correction of the row is what is written |
 | `marker_genes` | `expresses` (RO:0002292) to the gene entity, only where one sentence of the paper names both (that sentence is the evidence); others are listed as not written |
 
 Working files go to `out/.structsense/` (`<paper_id>_ait_final.json`,
 `_ait_kg_plan.json`, `_ait_ttl_report.json`). In `run_report.md`, quote what
 `ait_ttl` prints: the concept-mapping counts per class (mapped / unmapped), any trusted
-files listed in `priority.md` but missing, the gene link count, and every gene not
-linked or linked by a weaker tier.
+files listed in `priority.md` but missing, the gene counts (linked to `GeneAnnotation` / mapped
+elsewhere / unmapped), and every gene mapped elsewhere, not mapped, or linked by a weaker tier.
 
 ## Tools
 

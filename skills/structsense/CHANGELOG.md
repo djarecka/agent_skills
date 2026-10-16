@@ -36,9 +36,12 @@
   curator corrections reach the graph; when the table is missing it runs the map stage
   with the same cascade (trusted files first, then the local mapper, OLS, BioPortal;
   `--offline` for trusted files only) and writes it. Before, no species or region was mapped
-  in the Turtle. `map_ait` sends **gene rows to their genome annotation**
-  (`ait_nodes.resolve_gene_row`), not the general mapper, and a `remap` of a gene's
-  concept row looks the new symbol up there too. On the test paper: species 5/5,
+  in the Turtle. `map_ait` sends **gene rows to their genome annotation first**
+  (`ait_nodes.resolve_gene_row`): its `GeneAnnotation` IRI is what the taxonomy's
+  `curated_markers` link to. A gene the annotation does not resolve continues through
+  the cascade like every other entity (label `Gene`, routed to HGNC / NCBIGene), noted
+  as not joining the markers; a `remap` of a gene's concept row does the same.
+  `ait_ttl` reports genes linked to `GeneAnnotation`, mapped elsewhere, and unmapped. On the test paper: species 5/5,
   brain regions 10/18 (the rest need `uberon.owl`, which `priority.md` lists but the
   directory does not hold), genes 39/39.
 - **Every gene row is linked.** `gene_annotations` is keyed by NCBI taxon id (common and

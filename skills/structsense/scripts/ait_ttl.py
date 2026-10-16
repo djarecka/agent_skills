@@ -340,7 +340,7 @@ def apply_concepts(result: dict, rows: List[Dict[str, str]], entities: List[Dict
             it["concept_mapping_provenance"] = "unmapped"
             it["alignment_method"] = "unmapped"
     rep = {"mapped": {}, "unmapped": {}, "genes": {"rows": 0, "linked": 0, "files": {}, "not_linked": [],
-                                                    "weaker_tier": []}}
+                                                    "weaker_tier": [], "elsewhere": []}}
     etype = {e["mention_id"]: e for e in entities}
     for r in rows:
         mid = r.get("mention_id")
@@ -352,12 +352,15 @@ def apply_concepts(result: dict, rows: List[Dict[str, str]], entities: List[Dict
         if typ == "gene":
             g = rep["genes"]
             g["rows"] += 1
-            if ok:
+            src = r.get("mapping_source") or ""
+            if ok and src.startswith("trusted:annotation-"):
                 g["linked"] += 1
-                src = (r.get("mapping_source") or "").removeprefix("trusted:")
+                src = src.removeprefix("trusted:")
                 g["files"][src] = g["files"].get(src, 0) + 1
                 if r.get("match_tier") != "exactMatch":
                     g["weaker_tier"].append(f"{r.get('query')} -> {r.get('ontology_label')} ({r.get('notes')})")
+            elif ok:
+                g["elsewhere"].append(f"{r.get('query')} -> {r.get('ontology_id')} ({src})")
             else:
                 g["not_linked"].append(f"{r.get('query')}: {r.get('notes')}")
     return rep
@@ -452,7 +455,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     g = cmr.get("genes") or {}
     if g.get("rows"):
         files = ", ".join(f"{f} ({n})" for f, n in sorted(g["files"].items())) or "none"
-        print(f"  genes linked: {g['linked']}/{g['rows']} (annotation: {files})")
+        print(f"  genes linked to GeneAnnotation: {g['linked']}/{g['rows']} (annotation: {files}); "
+              f"mapped elsewhere: {len(g['elsewhere'])}; unmapped: {len(g['not_linked'])}")
+    for w in g.get("elsewhere", []):
+        print(f"  gene mapped outside the annotation (does not join the taxonomy markers): {w}")
     for w in g.get("weaker_tier", []):
         print(f"  gene linked by a weaker tier (review): {w}")
     for w in g.get("not_linked", []):
