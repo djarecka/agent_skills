@@ -7,7 +7,7 @@ marker genes. Both come from here, never from model knowledge.
 The node data are the parsed Allen taxonomies in `trusted_ontologes/` (the directory
 `concept_mapping.json` → `trusted_ontologies.directory` names, as for every other
 trusted ontology). Which file holds which taxonomy and species is the catalog entry's
-`trusted_files` in `data/allen_taxonomies.json`; the files are instances of the BICAN
+`trusted_files` in the manifest `trusted_ontologes/ait_taxonomies.json`; the files are instances of the BICAN
 Cell Taxonomy model, `trusted_ontologes/cell_taxonomy.ttl` (the catalog's
 `trusted_model`). Read through that model:
 
@@ -29,8 +29,9 @@ Marker genes of a node, in this order and de-duplicated: its `curated_markers`, 
 the `gene` abbreviations of its own label, then (unless `own_only`) those of its
 ancestors, nearest first. `curated_markers` are links to `bican:GeneAnnotation`
 instances (the model's range); their symbols (`biolink:symbol`) are read from the
-species' genome annotation in `trusted_ontologes/` — the catalog's
-`gene_annotation_files`, bkbit gff2jsonld output — loaded only when markers are asked
+genome annotation the taxonomy file itself names (`CellTypeTaxonomy.
+gene_annotation_version`, e.g. `ENSEMBL-9606-109` -> `annotation-ENSEMBL-9606-109.ttl`
+in `trusted_ontologes/`, bkbit gff2jsonld output) — loaded only when markers are asked
 for. A marker IRI the annotation file does not hold is listed in
 `Taxonomy.unresolved_markers`, never guessed.
 
@@ -138,9 +139,7 @@ class Taxonomy:
 
 def trusted_dir() -> Path:
     """`trusted_ontologies.directory` from concept_mapping.json (default `trusted_ontologes`)."""
-    cfg = json.loads((SKILL_DIR / "concept_mapping.json").read_text(encoding="utf-8"))
-    d = Path((cfg.get("trusted_ontologies") or {}).get("directory", "trusted_ontologes")).expanduser()
-    return d if d.is_absolute() else SKILL_DIR / d
+    return ait_taxonomy.trusted_dir()
 
 
 def resolve(identifier: str, species: Optional[str] = None,
@@ -153,7 +152,7 @@ def resolve(identifier: str, species: Optional[str] = None,
     """
     entry = ait_taxonomy.find(identifier, catalog)
     if entry is None:
-        raise LookupError(f"{identifier!r} is not in data/allen_taxonomies.json")
+        raise LookupError(f"{identifier!r} is not in trusted_ontologes/ait_taxonomies.json")
     files = {k.lower(): v for k, v in (entry.get("trusted_files") or {}).items()}
     if not files:
         raise LookupError(f"{entry['title']}: no trusted taxonomy file (trusted_files) — "
@@ -308,6 +307,16 @@ def gene_concept_fields(gm: GeneMatch) -> Dict[str, str]:
             f"{gm.symbol!r} matched {gm.gene_symbol!r} by {gm.tier}, not exact symbol: review"}
 
 
+def _gene_file_of(tax, g, B, directory: Optional[Path] = None) -> str:
+    """The genome annotation a taxonomy file's curated_markers link into: the file names
+    it (`bican:gene_annotation_version`, written by bkbit ait2jsonld --gene_annotation)."""
+    v = str(g.value(tax, B("gene_annotation_version")) or "").strip() if tax is not None else ""
+    if not v:
+        return ""
+    f = f"annotation-{v}.ttl"
+    return f if ((directory or trusted_dir()) / f).exists() else ""
+
+
 def load(identifier: str, species: Optional[str] = None, *, catalog: Optional[Path] = None,
          directory: Optional[Path] = None) -> Taxonomy:
     from rdflib import RDF, RDFS, URIRef
@@ -372,7 +381,7 @@ def load(identifier: str, species: Optional[str] = None, *, catalog: Optional[Pa
                     title=lit(tax, B("title")) if tax is not None else entry["taxonomy_name"],
                     file=fname, reference_genome=lit(tax, B("reference_genome")) if tax is not None else "",
                     levels=levels, nodes=nodes,
-                    gene_file=(entry.get("gene_annotation_files") or {}).get(sp, ""))
+                    gene_file=_gene_file_of(tax, g, B, directory))
 
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
@@ -514,7 +523,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sym = tax.gene_symbols()
         lost = sorted({i for x in args.node_id for i in tax.nodes[x].curated_markers if i not in sym})
         if lost:
-            print(f"warning: {len(lost)} curated_markers not in {tax.gene_file or '(no gene_annotation_files)'}: {lost}")
+            print(f"warning: {len(lost)} curated_markers not in {tax.gene_file or '(no gene_annotation_version in the taxonomy file)'}: {lost}")
         text = json.dumps(data, indent=2)
         if args.out:
             Path(args.out).write_text(text + "\n", encoding="utf-8")

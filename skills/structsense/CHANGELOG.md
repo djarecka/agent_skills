@@ -2,6 +2,16 @@
 
 ## 0.13.0 — AIT mapping always writes validated Turtle
 
+- **`data/allen_taxonomies.json` → `trusted_ontologes/ait_taxonomies.json`**, the
+  manifest of the Allen taxonomies, next to the files it describes. It keeps only what
+  the `.ttl` files do not hold: AIT numbers, each file's species (`trusted_files`), the
+  taxonomy-level description used to choose a taxonomy, and `gene_annotations`. The
+  per-taxonomy `gene_annotation_files` is gone: the annotation a taxonomy's
+  `curated_markers` link into is read from the file's own `gene_annotation_version`.
+  The 7 taxonomies without local files stay listed, so a paper they fit is recorded as
+  `skos_relation = none` ("no trusted node data") instead of being forced onto the
+  basal ganglia taxonomy. A test checks the manifest against the files (species in
+  the title, CCN in the accessions, the annotation per species).
 - **`scripts/ait_ttl.py`** (new): AIT mapping tables → `<paper_id>.ttl`, the graph
   deliverable of the AIT mode, now a mandatory last step (prompt pass 5, SKILL.md).
   Refuses tables that fail `ait_tables validate`; builds a working NER result +

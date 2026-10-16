@@ -237,7 +237,8 @@ match within it using label, marker genes, and hierarchy level.
 ### Available AIT taxonomies
 
 Do not keep a list of taxonomies in this prompt. The list has one maintained home,
-`data/allen_taxonomies.json` (a dated snapshot of the brain-map.org taxonomy index),
+`trusted_ontologes/ait_taxonomies.json` (a dated snapshot of the brain-map.org taxonomy index,
+kept next to the parsed taxonomy files),
 and is read with code:
 
 ```bash
@@ -372,7 +373,7 @@ For the mapped AIT node, retrieve its marker gene set with
 `curated_markers`, then the `gene` abbreviations of its own label, then those of its
 ancestors (`--own-only` drops the ancestors). `curated_markers` are links to
 `bican:GeneAnnotation` instances in the species' genome annotation file
-(`gene_annotation_files` in the catalog, e.g. `trusted_ontologes/annotation-ENSEMBL-9606-109.ttl`);
+(the one the taxonomy file names in `gene_annotation_version`, e.g. `trusted_ontologes/annotation-ENSEMBL-9606-109.ttl`);
 the symbols are read from there. A marker the source taxonomy wrote as free text or
 an unknown alias (e.g. `Six3 and Foxp1`, `Ctip2`) was left out when the taxonomy was
 translated and is not in the file — do not add it back from memory. These sets are short — curated markers
@@ -531,7 +532,7 @@ carry taxonomy markers and which markers, edges where the paper names markers, e
 shared markers, edges whose Jaccard is `NA`) — quote those numbers, never summarise
 marker availability in your own words;
 mappings by SKOS relation; edges whose best evidence is only `fuzzy`; unmapped entities
-with reasons; sources attempted vs retrieved; the `allen_taxonomies.json` snapshot date
+with reasons; sources attempted vs retrieved; the `ait_taxonomies.json` snapshot date
 used; the trusted taxonomy file(s) nodes and markers were read from; the `validate` result; the Turtle file, its triple / entity / mention / AIT-edge / gene-link counts, the genes not linked, and its `validate_ttl` result (from `ait_ttl`); and every assumption you made that a curator should check.
 
 ---
@@ -576,7 +577,7 @@ elsewhere / unmapped), and every gene mapped elsewhere, not mapped, or linked by
   already been extracted, retrieve the stored record instead of re-deriving it, and
   extend rather than duplicate. Reusing stored facts in place of re-reading source text
   is the intended steady state.
-- **AIT taxonomy catalog** — `scripts/ait_taxonomy.py` over `data/allen_taxonomies.json`
+- **AIT taxonomy catalog** — `scripts/ait_taxonomy.py` over `trusted_ontologes/ait_taxonomies.json`
   picks the taxonomy (Pass 3).
 - **AIT taxonomy reader** — `scripts/ait_nodes.py` over the trusted taxonomy files in
   `trusted_ontologes/` (model: `cell_taxonomy.ttl`): look up candidate nodes by label,

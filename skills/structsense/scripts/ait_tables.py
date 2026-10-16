@@ -436,7 +436,7 @@ def validate(out_dir: Path, schema: Optional[dict] = None, catalog: Optional[Pat
         if node:
             entry = ait_taxonomy.find(ait_id, catalog) if ait_id else None
             if entry is None:
-                issues.append(Issue("warning", t, n, "ait_id", f"{ait_id!r} not in data/allen_taxonomies.json"))
+                issues.append(Issue("warning", t, n, "ait_id", f"{ait_id!r} not in trusted_ontologes/ait_taxonomies.json"))
             elif m.get("species_experimental"):
                 covered = ait_taxonomy.species_covered(ait_id, m["species_experimental"], catalog)
             if entry is not None and entry.get("trusted_files"):

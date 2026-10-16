@@ -2,12 +2,12 @@
   "source": "The brain-map.org taxonomy page given in each entry's url",
   "snapshot_date": "2026-10-01",
   "notes": [
-    "This catalog is deliberately limited to these eight taxonomies. Add a taxonomy here, not in a prompt.",
+    "Manifest of the Allen (AIT) cell-type taxonomies, next to the parsed taxonomy files it describes. It holds only what those files do not: the AIT numbers (per species for a multi-species taxonomy), each file's species (trusted_files), the taxonomy-level description used to choose a taxonomy (species, regions, hierarchy, publication, page url), and which genome annotation a paper's genes of each species are linked to (gene_annotations). Node data — labels, accession ids, hierarchy, markers, regions per node, and the annotation a taxonomy's curated_markers link into (CellTypeTaxonomy.gene_annotation_version) — are read from the .ttl files by scripts/ait_nodes.py, never restated here. tests/test_structsense_ait.py checks this manifest against the files.",
+    "Taxonomies without trusted_files are listed on purpose: they let scripts/ait_taxonomy.py rank a paper's best-fitting taxonomy even when no node data is local, so the mapping records skos_relation = none ('no trusted node data') instead of forcing the nearest taxonomy that has files. Add a taxonomy here, not in a prompt.",
     "ait_ids are the Allen Institute Taxonomy numbers shown on each taxonomy's brain-map.org page; ait_ids_by_species gives the per-species number for multi-species taxonomies.",
     "regions holds anatomical terms only; scripts/ait_taxonomy.py matches them against a paper's regions.",
     "Not re-confirmed against brain-map.org on the snapshot date: the Comparative LGN CCN (null), the Whole Mouse Brain Consensus publication line, and the mapmycells flags other than those of the Whole Mouse Brain Consensus and Cross-Species Basal Ganglia taxonomies.",
-    "trusted_files names, per species, the parsed taxonomy in trusted_ontologes/ (instances of trusted_model, the BICAN Cell Taxonomy model) that scripts/ait_nodes.py reads nodes and marker genes from. A taxonomy without trusted_files has no local node data. gene_annotation_files names, per species, the genome annotation (bkbit gff2jsonld) in trusted_ontologes/ whose GeneAnnotation IRIs the taxonomy's curated_markers link to; ait_nodes.py reads marker symbols from it.",
-    "gene_annotations maps an NCBI taxon id to the trusted genome annotation (bkbit gff2jsonld, in trusted_ontologes/) a paper's genes of that species are linked to, with common and scientific names as a fallback key; ait_ttl.py uses it. It is independent of the taxonomy chosen (mouse has one though no mouse taxonomy has trusted files)."
+    "gene_annotations maps an NCBI taxon id to the trusted genome annotation (bkbit gff2jsonld) a paper's genes of that species are linked to first, with common and scientific names as a fallback key. It is independent of the taxonomy chosen (mouse has one though no mouse taxonomy has trusted files)."
   ],
   "taxonomies": [
     {
@@ -68,11 +68,6 @@
         "human": "Human_BG.ttl",
         "macaque": "Macaque_BG.ttl",
         "marmoset": "Marmoset_BG.ttl"
-      },
-      "gene_annotation_files": {
-        "human": "annotation-ENSEMBL-9606-109.ttl",
-        "macaque": "annotation-NCBI-9544-103.ttl",
-        "marmoset": "annotation-NCBI-9483-105.ttl"
       }
     },
     {

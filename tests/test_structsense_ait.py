@@ -8,6 +8,7 @@ diff. Standard library only, like the rest of the suite.
 """
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -204,16 +205,26 @@ class TrustedTaxonomyNodes(unittest.TestCase):
             for n in t.nodes.values():
                 self.assertFalse([i for i in n.curated_markers if i.startswith("file:")], n.node_id)
 
-    def test_catalog_gene_file_is_the_one_the_taxonomy_was_built_with(self):
-        # ait2jsonld records the annotation curated_markers link into as
-        # gene_annotation_version; the catalog must point ait_nodes at it.
-        import rdflib
+    def test_manifest_agrees_with_the_taxonomy_files(self):
+        # trusted_ontologes/ait_taxonomies.json holds only what the .ttl files do not;
+        # where both say something, they must agree.
         from scripts import ait_nodes
-        gav = rdflib.URIRef("https://identifiers.org/brain-bican/vocab/gene_annotation_version")
-        for ait_id in ("AIT19.5", "AIT11.9", "AIT101"):
-            t = ait_nodes.load(ait_id)
-            g = ait_nodes._parse(str(ait_nodes.trusted_dir() / t.file))
-            self.assertEqual({f"annotation-{v}.ttl" for v in g.objects(None, gav)}, {t.gene_file}, ait_id)
+        catalog = tax.load_catalog()
+        self.assertEqual(tax.CATALOG_PATH.parent, ait_nodes.trusted_dir())
+        gene_files = {e["file"] for e in catalog["gene_annotations"].values()}
+        for entry in tax.taxonomies():
+            for species, fname in (entry.get("trusted_files") or {}).items():
+                self.assertIn(species, entry["species"], fname)
+                t = ait_nodes.load(tax.preferred_id(entry, species), species)
+                # the file's own title names its species, and its accessions the CCN
+                self.assertIn(species, t.title.lower(), fname)
+                ccn = re.findall(r"CCN(\d+)", entry["ccn"] or "")
+                accessions = {n.accession_id.split("_")[0] for n in t.nodes.values() if n.accession_id}
+                self.assertEqual(accessions, {f"CS{ccn[0]}"}, fname)
+                # the annotation its curated_markers link into is a trusted file, and the
+                # one the manifest gives that species' genes
+                self.assertIn(t.gene_file, gene_files, fname)
+                self.assertEqual(ait_nodes.gene_annotation_file(species), t.gene_file, fname)
 
     def test_every_extracted_gene_links_to_an_ensembl_or_ncbi_annotation(self):
         from scripts import ait_nodes

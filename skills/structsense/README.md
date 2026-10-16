@@ -31,7 +31,8 @@ structsense/
 │   ├── ttl_config.json             ← IRI scheme (UUIDv5), guardrails, predicates, prefix registry (static part)
 │   ├── label_class_map.json        ← extractor label → ontology class
 │   └── key_synonyms.json           ← user overrides for keys (keys come from the trusted ontologies)
-├── trusted_ontologes/       ← the trusted ontology files (OWL/TTL)
+├── trusted_ontologes/       ← the trusted ontology files (OWL/TTL); ait_taxonomies.json is the manifest of the
+│                              Allen taxonomies (AIT numbers, species per file, gene annotations)
 │   ├── priority.md                 ← THE priority table (edit to reorder / enable / add)
 │   ├── README.md                   ← generated list of the ontologies
 │   ├── sources.json                ← acquisition log
@@ -141,9 +142,8 @@ structsense/
 │   ├── ait_tables.py        ← AIT column contract: init / derive / review-sheet / validate
 │   └── ait_gene_diff.py     ← AIT Pass 4: entity cards + marker-gene diff
 ├── data/
-│   ├── dictionaries/        ← bundled ABCD/HBCD dictionaries, all 7 releases,
-│   │                          539,781 variables in 8.6 MB gzipped (self-contained)
-│   └── allen_taxonomies.json ← the 8 supported Allen (AIT) cell type taxonomies
+│   └── dictionaries/        ← bundled ABCD/HBCD dictionaries, all 7 releases,
+│                              539,781 variables in 8.6 MB gzipped (self-contained)
 ├── requirements.txt         ← core deps; -llm / -ner / -dev for the optional paths
 └── examples/                ← worked end-to-end examples
     ├── ttl/                 ← a real open-access paper (Hu et al. 2026, CC BY 4.0) end to end
