@@ -206,7 +206,7 @@ class TrustedTaxonomyNodes(unittest.TestCase):
                 self.assertFalse([i for i in n.curated_markers if i.startswith("file:")], n.node_id)
 
     def test_manifest_agrees_with_the_taxonomy_files(self):
-        # trusted_ontologes/ait_taxonomies.json holds only what the .ttl files do not;
+        # trusted_ontologies/ait_taxonomies.json holds only what the .ttl files do not;
         # where both say something, they must agree.
         from scripts import ait_nodes
         catalog = tax.load_catalog()

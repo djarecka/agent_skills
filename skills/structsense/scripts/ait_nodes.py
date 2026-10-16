@@ -4,11 +4,11 @@
 `scripts/ait_taxonomy.py`, then finds the node inside it; Pass 4 needs that node's
 marker genes. Both come from here, never from model knowledge.
 
-The node data are the parsed Allen taxonomies in `trusted_ontologes/` (the directory
+The node data are the parsed Allen taxonomies in `trusted_ontologies/` (the directory
 `concept_mapping.json` → `trusted_ontologies.directory` names, as for every other
 trusted ontology). Which file holds which taxonomy and species is the catalog entry's
-`trusted_files` in the manifest `trusted_ontologes/ait_taxonomies.json`; the files are instances of the BICAN
-Cell Taxonomy model, `trusted_ontologes/cell_taxonomy.ttl` (the catalog's
+`trusted_files` in the manifest `trusted_ontologies/ait_taxonomies.json`; the files are instances of the BICAN
+Cell Taxonomy model, `trusted_ontologies/cell_taxonomy.ttl` (the catalog's
 `trusted_model`). Read through that model:
 
 - `bican:CellTypeTaxonomy` — one per file (`bican:title`, `bican:reference_genome`);
@@ -31,7 +31,7 @@ ancestors, nearest first. `curated_markers` are links to `bican:GeneAnnotation`
 instances (the model's range); their symbols (`biolink:symbol`) are read from the
 genome annotation the taxonomy file itself names (`CellTypeTaxonomy.
 gene_annotation_version`, e.g. `ENSEMBL-9606-109` -> `annotation-ENSEMBL-9606-109.ttl`
-in `trusted_ontologes/`, bkbit gff2jsonld output) — loaded only when markers are asked
+in `trusted_ontologies/`, bkbit gff2jsonld output) — loaded only when markers are asked
 for. A marker IRI the annotation file does not hold is listed in
 `Taxonomy.unresolved_markers`, never guessed.
 
@@ -138,7 +138,7 @@ class Taxonomy:
 
 
 def trusted_dir() -> Path:
-    """`trusted_ontologies.directory` from concept_mapping.json (default `trusted_ontologes`)."""
+    """`trusted_ontologies.directory` from concept_mapping.json (default `trusted_ontologies`)."""
     return ait_taxonomy.trusted_dir()
 
 
@@ -152,7 +152,7 @@ def resolve(identifier: str, species: Optional[str] = None,
     """
     entry = ait_taxonomy.find(identifier, catalog)
     if entry is None:
-        raise LookupError(f"{identifier!r} is not in trusted_ontologes/ait_taxonomies.json")
+        raise LookupError(f"{identifier!r} is not in trusted_ontologies/ait_taxonomies.json")
     files = {k.lower(): v for k, v in (entry.get("trusted_files") or {}).items()}
     if not files:
         raise LookupError(f"{entry['title']}: no trusted taxonomy file (trusted_files) — "

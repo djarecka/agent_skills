@@ -310,7 +310,7 @@ def check_node(table: str, row: int, m: Dict[str, str], catalog: Optional[Path],
     node = tax.node(m["ait_node_id"])
     if node is None:
         return [Issue("error", table, row, "ait_node_id",
-                      f"{m['ait_node_id']!r} is not a node of trusted_ontologes/{tax.file}")]
+                      f"{m['ait_node_id']!r} is not a node of trusted_ontologies/{tax.file}")]
     out = []
     if m.get("ait_cell_type_label") and m["ait_cell_type_label"] != node.label:
         out.append(Issue("error", table, row, "ait_cell_type_label",
@@ -436,7 +436,7 @@ def validate(out_dir: Path, schema: Optional[dict] = None, catalog: Optional[Pat
         if node:
             entry = ait_taxonomy.find(ait_id, catalog) if ait_id else None
             if entry is None:
-                issues.append(Issue("warning", t, n, "ait_id", f"{ait_id!r} not in trusted_ontologes/ait_taxonomies.json"))
+                issues.append(Issue("warning", t, n, "ait_id", f"{ait_id!r} not in trusted_ontologies/ait_taxonomies.json"))
             elif m.get("species_experimental"):
                 covered = ait_taxonomy.species_covered(ait_id, m["species_experimental"], catalog)
             if entry is not None and entry.get("trusted_files"):

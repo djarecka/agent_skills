@@ -2,7 +2,10 @@
 
 ## 0.13.0 — AIT mapping always writes validated Turtle
 
-- **`data/allen_taxonomies.json` → `trusted_ontologes/ait_taxonomies.json`**, the
+- **`trusted_ontologes/` is renamed `trusted_ontologies/`** (typo). Every reference
+  is updated, including `concept_mapping.json` → `trusted_ontologies.directory`; a
+  local copy configured with the old directory name must be pointed at the new one.
+- **`data/allen_taxonomies.json` → `trusted_ontologies/ait_taxonomies.json`**, the
   manifest of the Allen taxonomies, next to the files it describes. It keeps only what
   the `.ttl` files do not hold: AIT numbers, each file's species (`trusted_files`), the
   taxonomy-level description used to choose a taxonomy, and `gene_annotations`. The
@@ -81,7 +84,7 @@
 ## Unreleased — AIT mapping reads nodes from the trusted taxonomy files
 
 - **`scripts/ait_nodes.py`** (new): the AIT taxonomy reader the AIT mapping prompt
-  named but did not have. Reads the parsed Allen taxonomies in `trusted_ontologes/`
+  named but did not have. Reads the parsed Allen taxonomies in `trusted_ontologies/`
   (`Human_BG.ttl`, `Macaque_BG.ttl`, `Marmoset_BG.ttl`) through the BICAN Cell Taxonomy
   model (`cell_taxonomy.ttl`): `info`, `search` (label / marker genes / region
   shortlist), `show`, `markers` (Pass 4 `--markers` JSON). `ait_node_id` is the node's
@@ -101,7 +104,7 @@
   Not listed in `priority.md` (instance data, not ontology classes).
 - **`data/allen_taxonomies.json`**: `trusted_files` and `gene_annotation_files` (per
   species) on the Cross-Species Basal Ganglia entry and a top-level `trusted_model`.
-- **`trusted_ontologes/sources.json`**: entries for the four annotation files; the
+- **`trusted_ontologies/sources.json`**: entries for the four annotation files; the
   file was invalid JSON (trailing commas at the end) and is fixed.
 - **`ait_tables.py validate`**: an edge into a taxonomy with trusted files must name a
   node of that file with its exact label (error); a different level is a warning.
@@ -352,14 +355,14 @@ it is handed back. The JSON the stages exchange is working state.
   evidence for non-hypothetical claims); prefix consistency; labels; one connected
   component. `pipeline.py` renames a failing file `.invalid.ttl` and reports it.
 - **Trusted ontologies first.** New `scripts/concept_mapping.py` maps from the
-  ontology files in `trusted_ontologes/` before any remote service, in the order of
-  the editable `trusted_ontologes/priority.md` (seeded from `sources.json`: 42
+  ontology files in `trusted_ontologies/` before any remote service, in the order of
+  the editable `trusted_ontologies/priority.md` (seeded from `sources.json`: 42
   declared ontologies enabled, 74 discovery candidates `off`). Each file is indexed
   once into `lexicon/<name>.tsv.gz` + `lexicon.sqlite` (all 42, PR's 1.2 GB
   included, in about 95 s); lookups are exact on a normalised form, routed by
   label, guarded against bare abbreviations (PFC is prefrontal cortex in UBERON
   and prefollicle cell in FBbt), and ambiguity is reported rather than resolved.
-  Everything is `concept_mapping.json`; `trusted_ontologes/README.md` lists the
+  Everything is `concept_mapping.json`; `trusted_ontologies/README.md` lists the
   ontologies (`concept_mapping readme`).
 - **One prefix registry.** New `scripts/prefixes.py`: a term keeps the prefix of its
   namespace whichever file it came from (cl.owl's UBERON terms are UBERON), a

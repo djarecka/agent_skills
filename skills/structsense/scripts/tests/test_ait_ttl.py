@@ -53,7 +53,7 @@ def _run(*args):
     return p.stdout
 
 
-@pytest.mark.skipif(not (SKILL / "trusted_ontologes" / "Human_BG.ttl").is_file(), reason="needs Human_BG.ttl")
+@pytest.mark.skipif(not (SKILL / "trusted_ontologies" / "Human_BG.ttl").is_file(), reason="needs Human_BG.ttl")
 def test_ait_tables_to_validated_ttl(tmp_path):
     s1 = "Nuclei were mapped with MapMyCells to the HMBA consensus basal ganglia taxonomy."
     s2 = "The STR D1 MSN group expressed _DRD1_ strongly in human putamen."
@@ -88,7 +88,7 @@ def test_ait_tables_to_validated_ttl(tmp_path):
         ait_node_id="CS20250428_SUBCL_0028", ait_cell_type_label="STR D1 MSN", ait_hierarchy_level="Subclass",
         skos_relation="skos:exactMatch", basis_for_match="author_statement|label_exact", mapping_id=f"{PID}:MAP001",
         mapped_by="llm", field_provenance="ait_node_id=code:ontology_lookup", run_id=RUN,
-        notes="Node read from trusted_ontologes/Human_BG.ttl.")])
+        notes="Node read from trusted_ontologies/Human_BG.ttl.")])
     _write(tmp_path, "entity_cards.csv", [])
     _write(tmp_path, "review_sheet.csv", [])
     _run("scripts.ait_evidence", str(tmp_path), "--text", str(tmp_path / "paper.txt"))
@@ -143,7 +143,7 @@ def test_long_identifier_names_a_decision_by_its_label():
     assert b.id_name(long_curie, None, "BKBIT") == "BKBIT concept"
 
 
-@pytest.mark.skipif(not (SKILL / "trusted_ontologes" / "Human_BG.ttl").is_file(), reason="needs Human_BG.ttl")
+@pytest.mark.skipif(not (SKILL / "trusted_ontologies" / "Human_BG.ttl").is_file(), reason="needs Human_BG.ttl")
 def test_a_correction_in_concept_mappings_reaches_the_graph(tmp_path):
     """The Turtle is written from concept_mappings.csv, so a judge/curator correction
     there (here: a demoted region) is what the graph says — nothing re-maps it."""

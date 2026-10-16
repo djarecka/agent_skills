@@ -293,7 +293,7 @@ def map_ait(data: dict, tools: Tools) -> dict:
     """entities.csv -> concept_mappings.csv (one row per entity, mapped or not).
 
     Genes go first to their trusted genome annotation (the species' ENSEMBL/NCBI
-    gff2jsonld file in trusted_ontologes/, ait_nodes.resolve_gene_row): its
+    gff2jsonld file in trusted_ontologies/, ait_nodes.resolve_gene_row): its
     GeneAnnotation IRI is the one the taxonomy's curated_markers link to. A gene the
     annotation does not resolve continues through the cascade like every other entity
     (label Gene -> HGNC / NCBIGene), with a note that it does not join the markers.

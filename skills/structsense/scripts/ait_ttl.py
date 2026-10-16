@@ -271,7 +271,7 @@ class AitTurtleBuilder(j2t.TurtleBuilder):
             if (concept, RDFS.comment, None) not in self.g:
                 self.add(concept, RDFS.comment, Literal(
                     f"{e['ait_id']} {node.level} {node.accession_id or node.label} "
-                    f"(trusted_ontologes/{tax.file}; {tax.title})"))
+                    f"(trusted_ontologies/{tax.file}; {tax.title})"))
             self.add(ent["node"], j2t.NER.resolvedToConcept, concept)
             self.add(ent["node"], j2t.MATCH_TIERS[tier], URIRef(ref[0]))
             it = {"mapping_source": "trusted", "ontology_match_type": e.get("basis_for_match", "").replace("|", ", "),

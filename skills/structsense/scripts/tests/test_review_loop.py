@@ -287,7 +287,7 @@ def test_ait_genes_map_to_the_species_annotation_and_remap_there(tmp_path):
     to the general mapper; a remap of its concept row looks the new symbol up there too."""
     from scripts import ait_tables as at
     pytest.importorskip("rdflib")
-    if not (SKILL / "trusted_ontologes" / "annotation-ENSEMBL-10090-109.ttl").is_file():
+    if not (SKILL / "trusted_ontologies" / "annotation-ENSEMBL-10090-109.ttl").is_file():
         pytest.skip("needs the mouse genome annotation")
     out = ait_dir(tmp_path)
     data = rl.load("ait", out)
@@ -311,7 +311,7 @@ def test_ait_gene_not_in_the_annotation_continues_through_the_cascade(tmp_path):
     """Annotation first; a gene it does not resolve goes through the cascade (label Gene,
     routed to HGNC / NCBIGene), and the row says it does not join the taxonomy markers."""
     pytest.importorskip("rdflib")
-    if not (SKILL / "trusted_ontologes" / "annotation-ENSEMBL-10090-109.ttl").is_file():
+    if not (SKILL / "trusted_ontologies" / "annotation-ENSEMBL-10090-109.ttl").is_file():
         pytest.skip("needs the mouse genome annotation")
 
     class GeneStub(StubMapper):

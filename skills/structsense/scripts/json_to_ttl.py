@@ -1988,7 +1988,7 @@ def _causal_prop(field: str) -> str:
             "modality": "causalModality", "directness": "causalDirectness"}[field]
 
 
-CONFIG_FILES = ("concept_mapping.json", "judges_config.json", "trusted_ontologes/priority.md",
+CONFIG_FILES = ("concept_mapping.json", "judges_config.json", "trusted_ontologies/priority.md",
                 "default_ontology/ttl_config.json", "default_ontology/label_class_map.json",
                 "default_ontology/key_synonyms.json", "default_ontology/named_entity_ontology.owl",
                 "default_ontology/named_entity_shapes.ttl")

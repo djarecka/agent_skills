@@ -48,13 +48,13 @@ be biased by what the taxonomy happens to contain.
 
 The flow is **extraction, then concept mapping against the trusted ontologies**. You
 extract into the tables (Passes 1–4); the mapping of every entity to an ontology term is
-done by code from the files in `trusted_ontologes/`, by entity type:
+done by code from the files in `trusted_ontologies/`, by entity type:
 
 | Entity | Trusted source | Where it is recorded |
 |---|---|---|
 | cell type with an AIT edge | the taxonomy file (`Human_BG.ttl`, …) | your `mappings.csv` edge, node ids from `ait_nodes` |
 | gene | first the species' genome annotation (`annotation-ENSEMBL-9606-109.ttl`, `annotation-NCBI-9544-103.ttl`, …; catalog `gene_annotations`), by symbol (`ait_nodes.GeneLookup`) — its `GeneAnnotation` IRI is the one the taxonomy's `curated_markers` link to; a gene it does not resolve continues through the cascade (HGNC / NCBIGene) and is flagged as not joining the markers | `concept_mappings.csv` (`review_loop map`) |
-| species, brain region, any cell type | the ontologies of `trusted_ontologes/priority.md` (NCBITaxon, UBERON via CL, CL, …), on the row's `label_normalized` | `concept_mappings.csv` (`review_loop map`) |
+| species, brain region, any cell type | the ontologies of `trusted_ontologies/priority.md` (NCBITaxon, UBERON via CL, CL, …), on the row's `label_normalized` | `concept_mappings.csv` (`review_loop map`) |
 
 So give every row a clean `label_normalized` (the name, not the surface: `subthalamic
 nucleus`, not `subthalamic 139 nucleus`; `striatum`, not `striatal`), give gene rows their
@@ -237,7 +237,7 @@ match within it using label, marker genes, and hierarchy level.
 ### Available AIT taxonomies
 
 Do not keep a list of taxonomies in this prompt. The list has one maintained home,
-`trusted_ontologes/ait_taxonomies.json` (a dated snapshot of the brain-map.org taxonomy index,
+`trusted_ontologies/ait_taxonomies.json` (a dated snapshot of the brain-map.org taxonomy index,
 kept next to the parsed taxonomy files),
 and is read with code:
 
@@ -259,12 +259,12 @@ missing), say so in `run_report.md` instead of inventing an ID.
 ### AIT nodes come from the trusted ontologies
 
 Node data — labels, accession ids, hierarchy, marker genes — are the parsed Allen
-taxonomies in `trusted_ontologes/`, the same directory every other trusted ontology
+taxonomies in `trusted_ontologies/`, the same directory every other trusted ontology
 lives in (`concept_mapping.json` → `trusted_ontologies.directory`). The catalog entry's
 `trusted_files` says which file holds which species (e.g. the Cross-Species Basal
 Ganglia taxonomy: `Human_BG.ttl`, `Macaque_BG.ttl`, `Marmoset_BG.ttl`). They are
-instances of the BICAN Cell Taxonomy model, `trusted_ontologes/cell_taxonomy.ttl`
-(trusted priority 1 in `trusted_ontologes/priority.md`), and are read through it:
+instances of the BICAN Cell Taxonomy model, `trusted_ontologies/cell_taxonomy.ttl`
+(trusted priority 1 in `trusted_ontologies/priority.md`), and are read through it:
 
 | Model class / property | What it gives the mapping |
 |---|---|
@@ -295,7 +295,7 @@ shortlist to adjudicate, like `rank`. Rules:
   node's `rdfs:label` exactly as in the file, and `ait_hierarchy_level` its level.
   `scripts/ait_tables.py validate` rejects a node id or label the file does not have.
 - Mark `ait_node_id` in `field_provenance` as `code:ontology_lookup` only when it came
-  from `ait_nodes`, and name the file in `notes` (`trusted_ontologes/Human_BG.ttl`).
+  from `ait_nodes`, and name the file in `notes` (`trusted_ontologies/Human_BG.ttl`).
 - A taxonomy with no `trusted_files` has no local node data. Take node ids only from a
   source the paper deposits or cites (`supplementary_mapping`, `author_statement`) and
   record it in `sources.csv`; otherwise record `skos_relation = none` with
@@ -373,7 +373,7 @@ For the mapped AIT node, retrieve its marker gene set with
 `curated_markers`, then the `gene` abbreviations of its own label, then those of its
 ancestors (`--own-only` drops the ancestors). `curated_markers` are links to
 `bican:GeneAnnotation` instances in the species' genome annotation file
-(the one the taxonomy file names in `gene_annotation_version`, e.g. `trusted_ontologes/annotation-ENSEMBL-9606-109.ttl`);
+(the one the taxonomy file names in `gene_annotation_version`, e.g. `trusted_ontologies/annotation-ENSEMBL-9606-109.ttl`);
 the symbols are read from there. A marker the source taxonomy wrote as free text or
 an unknown alias (e.g. `Six3 and Foxp1`, `Ctip2`) was left out when the taxonomy was
 translated and is not in the file — do not add it back from memory. These sets are short — curated markers
@@ -577,10 +577,10 @@ elsewhere / unmapped), and every gene mapped elsewhere, not mapped, or linked by
   already been extracted, retrieve the stored record instead of re-deriving it, and
   extend rather than duplicate. Reusing stored facts in place of re-reading source text
   is the intended steady state.
-- **AIT taxonomy catalog** — `scripts/ait_taxonomy.py` over `trusted_ontologes/ait_taxonomies.json`
+- **AIT taxonomy catalog** — `scripts/ait_taxonomy.py` over `trusted_ontologies/ait_taxonomies.json`
   picks the taxonomy (Pass 3).
 - **AIT taxonomy reader** — `scripts/ait_nodes.py` over the trusted taxonomy files in
-  `trusted_ontologes/` (model: `cell_taxonomy.ttl`): look up candidate nodes by label,
+  `trusted_ontologies/` (model: `cell_taxonomy.ttl`): look up candidate nodes by label,
   region, or markers, and retrieve the marker gene set needed for the Pass 4 diff.
 - **Deterministic stages** — `scripts/ait_evidence.py` (Pass 2a), `scripts/ait_tables.py`
   (derive / review sheet / validate), `scripts/ait_gene_diff.py` (Pass 4),
